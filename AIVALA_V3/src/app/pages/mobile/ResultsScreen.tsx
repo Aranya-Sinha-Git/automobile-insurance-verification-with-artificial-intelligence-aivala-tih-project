@@ -24,8 +24,25 @@ export default function ResultsScreen() {
   const storedAnalysis = readStoredAnalysis(claimId);
   const aiData: HFAnalysisResult | null = parseStoredAnalysis(storedAnalysis);
 
+  // Rejected evidence can be persisted before an AI payload exists. Recover
+  // its user-facing reason from the claim record so history remains actionable.
+  let localRejectedReason: string | null = null;
+  if (!aiData && claimId) {
+    try {
+      const claims = JSON.parse(localStorage.getItem("claims") || "[]");
+      const found = claims.find((claim: any) => claim.id === claimId);
+      if (found?.status === "rejected") {
+        localRejectedReason =
+          found.rejectionReason ||
+          "Verification Failed: Evidence video did not pass security verification guidelines. Please record a new video.";
+      }
+    } catch {
+      // Ignore malformed local history and keep the normal empty-state screen.
+    }
+  }
+
   // If no AI data exists, show an error state
-  if (!aiData) {
+  if (!aiData && !localRejectedReason) {
     return (
       <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-6">
         <XCircle className="h-16 w-16 text-red-400 mb-4" />
@@ -43,12 +60,16 @@ export default function ResultsScreen() {
 
   // All values are derived from the AI analysis — no hardcoded fallbacks
   const isNoDamage = Boolean(
-    aiData.isNoDamage ||
-      (aiData.detections.length === 0 &&
-        aiData.rejectionReason === "No repairable damage was confirmed in the evidence"),
+    aiData?.isNoDamage ||
+      (aiData?.detections?.length === 0 &&
+        aiData?.rejectionReason === "No repairable damage was confirmed in the evidence"),
   );
-  const isRejected = Boolean(aiData.isRejected && !isNoDamage);
-  const screenReplayFlag = Boolean(aiData.screenRecordingCheck?.flagged);
+  const isRejected = Boolean(localRejectedReason || (aiData?.isRejected && !isNoDamage));
+  const rejectionText =
+    localRejectedReason ||
+    aiData?.rejectionReason ||
+    "The submitted evidence did not contain enough verified vehicle damage to approve this claim.";
+  const screenReplayFlag = Boolean(aiData?.screenRecordingCheck?.flagged);
 
   if (isRejected) {
     return (
@@ -71,18 +92,27 @@ export default function ResultsScreen() {
                 We could not approve this claim
               </h2>
               <p className="text-sm text-red-800">
-                {aiData.rejectionReason ||
-                  "The submitted evidence did not contain enough verified vehicle damage to approve this claim."}
+                {rejectionText}
               </p>
               <p className="text-sm text-gray-600 mt-4">
-                If you believe this decision is incorrect, please contact customer service for help.
+                If you believe this decision is incorrect, please record the evidence again or contact customer service.
               </p>
             </CardContent>
           </Card>
         </div>
 
         <div className="p-4 bg-white border-t space-y-3">
-          <Button asChild className="w-full bg-red-600 hover:bg-red-700">
+          <Button
+            className="w-full bg-blue-600 hover:bg-blue-700"
+            onClick={() => {
+              delete (window as any).currentClaimVideoFile;
+              delete (window as any).currentClaimThumbnail;
+              navigate("/app/video-recording");
+            }}
+          >
+            Record Evidence Again
+          </Button>
+          <Button asChild variant="outline" className="w-full">
             <a href="tel:18001234567">
               <Phone className="mr-2 h-4 w-4" />
               Call customer service

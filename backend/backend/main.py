@@ -53,7 +53,7 @@ logging.basicConfig(level=logging.INFO)
 
 app = FastAPI(title="AIVALA Standalone 5-Layer Fraud Detection Server")
 
-_default_origins = "capacitor://localhost,http://localhost,https://localhost,http://localhost:3000,http://localhost:5173"
+_default_origins = "capacitor://localhost,http://localhost,https://localhost,http://localhost:3000,http://localhost:5173,http://127.0.0.1:3000,http://127.0.0.1:5173"
 _allowed_origins = [origin.strip() for origin in os.getenv("AIVALA_ALLOWED_ORIGINS", _default_origins).split(",") if origin.strip()]
 if "*" in _allowed_origins:
     raise RuntimeError("AIVALA_ALLOWED_ORIGINS cannot contain '*' when credentialed browser access is enabled")

@@ -1363,16 +1363,20 @@ class AivalaFraudPipeline:
                     f"Layer 3 Failed: Visual splicing/overlay tampering detected via spatial noise variance ratio (spatial noise discrepancy ratio {spatial_noise_ratio:.2f} > threshold {threshold_noise_ratio:.1f}, peak patch noise {max_pv:.1f})",
                 )
 
-            if (max_noise_spot > 32.0 or (max_noise_spot > 25.0 and trufor_integrity_score < 65.0)) and not is_whatsapp:
+            # Camera noise around high-contrast vehicle details (plates,
+            # grilles, and reflections) can exceed the old threshold without
+            # indicating tampering. Require a stronger residual signal before
+            # rejecting authentic vehicle footage.
+            if (max_noise_spot > 55.0 or (max_noise_spot > 38.0 and trufor_integrity_score < 60.0)) and not is_whatsapp:
                 return (
                     False,
-                    f"Layer 3 Failed: Visual splicing/overlay tampering detected via TruFor Noiseprint++ peak camera noise residual spot (peak noise spot {max_noise_spot:.2f} > threshold 32.0)",
+                    f"Layer 3 Failed: Visual splicing/overlay tampering detected via TruFor Noiseprint++ peak camera noise residual spot (peak noise spot {max_noise_spot:.2f} > threshold 55.0)",
                 )
 
-            if noise_inconsistency > 9.5 and not is_whatsapp:
+            if noise_inconsistency > 15.0 and not is_whatsapp:
                 return (
                     False,
-                    f"Layer 3 Failed: Visual splicing detected via TruFor Noiseprint++ camera noise residual (spatial noise inconsistency {noise_inconsistency:.2f} > threshold 9.5)",
+                    f"Layer 3 Failed: Visual splicing detected via TruFor Noiseprint++ camera noise residual (spatial noise inconsistency {noise_inconsistency:.2f} > threshold 15.0)",
                 )
 
             if mean_error90 > adaptive_threshold:
@@ -1682,7 +1686,9 @@ class AivalaFraudPipeline:
         # Check 1: Screen & Monitor Re-Recording Detector (2D FFT Moiré + Planar Optical Flow Parallax)
         passed_screen, diag_screen = detect_screen_rerecording(frames)
         if not passed_screen:
-            return self._build_failure_response(3, diag_screen, default_code="SCREEN_RECORDING_REJECTED")
+            failure = self._build_failure_response(3, diag_screen, default_code="SCREEN_RECORDING_REJECTED")
+            stages["stage3_ela"] = self._stage(3, names["stage3_ela"], "FAILED", failure["reason"], failure.get("evidence"))
+            return self._pipeline_response(stages, False, **failure)
 
         # Check 2: Localized Block-Hash Tampering Verification (Copy-Move & Temporal)
         block_detector = BlockHashTamperDetector()

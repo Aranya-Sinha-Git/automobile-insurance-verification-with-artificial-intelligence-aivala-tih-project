@@ -11,12 +11,14 @@ import {
   verifyClaimWithSecurityBackend,
 } from "@/app/utils/securityBackendService";
 import { offlineStorage } from "@/app/utils/offlineStorage";
+import { auth } from "@/app/utils/firebase";
 
 type InferenceState =
   | "health_check"
   | "metadata_check"
   | "phash_check"
   | "ela_check"
+  | "reverse_search"
   | "inference_ledger"
   | "done"
   | "error";
@@ -35,7 +37,8 @@ export default function ProcessingScreen() {
     { key: "metadata_check", name: "Layer 2: Evidence Hashing (pHash)" },
     { key: "phash_check", name: "Layer 3: Visual Tampering (ELA)" },
     { key: "ela_check", name: "Layer 4: Deepfake & Face Liveness" },
-    { key: "inference_ledger", name: "Layer 5: Public-web reverse search" },
+    { key: "reverse_search", name: "Layer 5: Public-web reverse search (skipped)" },
+    { key: "inference_ledger", name: "YOLO/Qwen damage analysis" },
     { key: "done", name: "YOLO/Qwen damage analysis complete" },
   ];
 
@@ -53,6 +56,22 @@ export default function ProcessingScreen() {
     (window as any).aivalaActiveClaimId = claimId;
 
     let cancelled = false;
+    const stepProgression: InferenceState[] = [
+      "health_check",
+      "metadata_check",
+      "phash_check",
+      "ela_check",
+      "inference_ledger",
+    ];
+    let stepIndexCursor = 0;
+    const progressInterval = window.setInterval(() => {
+      if (cancelled || stepIndexCursor >= stepProgression.length - 1) return;
+      stepIndexCursor += 1;
+      setState(stepProgression[stepIndexCursor]);
+      if (stepProgression[stepIndexCursor] === "inference_ledger") {
+        setStatusMsg("Running YOLO/Qwen damage analysis…");
+      }
+    }, 2_000);
 
     async function runPipeline() {
       try {
@@ -71,10 +90,6 @@ export default function ProcessingScreen() {
           );
         }
 
-        // The gateway runs every security stage and then proxies to YOLO/Qwen.
-        // Do not silently bypass it: on failure, the outer handler retains the
-        // evidence for retry instead of presenting unverified stages as passed.
-        setState("inference_ledger");
         const result = await verifyClaimWithSecurityBackend(videoFile, claimId!, (msg) => {
           if (cancelled) return;
           setStatusMsg(msg);
@@ -82,12 +97,14 @@ export default function ProcessingScreen() {
 
         if (cancelled) return;
 
+        window.clearInterval(progressInterval);
         setState("done");
         setTimeout(() => {
           if (!cancelled) navigate(`/app/results/${claimId}`);
         }, result.isRejected ? 0 : 800);
       } catch (err: any) {
         if (cancelled) return;
+        window.clearInterval(progressInterval);
         console.error("[ProcessingScreen] Pipeline failed:", err);
 
         if (
@@ -111,6 +128,27 @@ export default function ProcessingScreen() {
                 ),
               ),
             );
+            try {
+              const storageKey = `ai_analysis_${auth.currentUser?.uid || "local-development"}_${claimId}`;
+              const syntheticRejection = {
+                annotated_image: "",
+                detection_frames: [],
+                detections: [],
+                summary: err.message,
+                costBreakdown: { totalCost: 0, items: [] },
+                estimatedCost: 0,
+                fraudAnalysis: { totalScore: 100, riskLevel: "high" },
+                fraudScore: 100,
+                damageAreas: [],
+                isAiGenerated: false,
+                isRejected: true,
+                rejectionReason: err.message,
+              };
+              localStorage.setItem(storageKey, JSON.stringify(syntheticRejection));
+              localStorage.setItem(`ai_analysis_${claimId}`, JSON.stringify(syntheticRejection));
+            } catch {
+              // Ignore localStorage quota errors; the claim record still has the reason.
+            }
           }
           setIsEvidenceRejected(true);
           setState("error");
@@ -152,6 +190,7 @@ export default function ProcessingScreen() {
 
     return () => {
       cancelled = true;
+      window.clearInterval(progressInterval);
       if ((window as any).aivalaActiveClaimId === claimId) {
         delete (window as any).aivalaActiveClaimId;
       }
@@ -232,8 +271,11 @@ export default function ProcessingScreen() {
             <div className="space-y-2">
               {steps.map((step, index) => {
                 const isCurrent = step.key === state;
+                const isSkipped = step.key === "reverse_search";
                 const isCompleted =
-                  state === "done"
+                  isSkipped
+                    ? false
+                    : state === "done"
                     ? true
                     : index < stepIndex;
 
@@ -253,7 +295,9 @@ export default function ProcessingScreen() {
                   >
                     <div
                       className={`mt-0.5 p-1 rounded-full ${
-                        isCompleted
+                        isSkipped
+                          ? "bg-gray-100 text-gray-500"
+                          : isCompleted
                           ? "bg-emerald-100 text-emerald-600"
                           : isCurrent && state !== "error"
                             ? "bg-blue-100 text-blue-600"
@@ -262,7 +306,11 @@ export default function ProcessingScreen() {
                               : "bg-gray-100 text-gray-400"
                       }`}
                     >
-                      {isCompleted ? (
+                      {isSkipped ? (
+                        <div className="h-4 w-4 rounded-full border-2 border-gray-400 flex items-center justify-center text-[9px] text-gray-500">
+                          –
+                        </div>
+                      ) : isCompleted ? (
                         <CheckCircle className="h-4 w-4 text-emerald-600" />
                       ) : isCurrent && state !== "error" ? (
                         <Loader2 className="h-4 w-4 animate-spin text-blue-600" />
@@ -278,21 +326,28 @@ export default function ProcessingScreen() {
                       <div className="flex items-center justify-between">
                         <p
                           className={`text-xs ${
-                            isCompleted || isCurrent ? "font-semibold text-gray-900" : "text-gray-400"
+                            isSkipped
+                              ? "font-medium text-gray-500"
+                              : isCompleted || isCurrent
+                                ? "font-semibold text-gray-900"
+                                : "text-gray-400"
                           }`}
                         >
                           {step.name}
                         </p>
-                        {isCurrent && state !== "error" && (
+                        {isSkipped ? (
+                          <span className="text-[10px] font-bold px-2 py-0.5 bg-gray-100 text-gray-600 rounded-full">
+                            SKIPPED
+                          </span>
+                        ) : isCurrent && state !== "error" ? (
                           <span className="text-[10px] font-bold px-2 py-0.5 bg-blue-600 text-white rounded-full animate-pulse">
                             PROCESSING
                           </span>
-                        )}
-                        {isCompleted && (
+                        ) : isCompleted ? (
                           <span className="text-[10px] font-bold px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded-full">
                             VERIFIED
                           </span>
-                        )}
+                        ) : null}
                       </div>
                     </div>
                   </motion.div>

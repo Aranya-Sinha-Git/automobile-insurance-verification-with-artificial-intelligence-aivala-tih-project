@@ -74,3 +74,30 @@ def test_cors_allows_configured_local_origin() -> None:
     )
     assert response.status_code == 200
     assert response.headers["access-control-allow-origin"] == "http://localhost:5173"
+
+
+def test_cors_allows_loopback_origin() -> None:
+    response = TestClient(app).options(
+        "/verify-claim/",
+        headers={"Origin": "http://127.0.0.1:5173", "Access-Control-Request-Method": "POST"},
+    )
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "http://127.0.0.1:5173"
+
+
+def test_screen_rerecording_failure_preserves_pipeline_schema(monkeypatch: pytest.MonkeyPatch) -> None:
+    pipeline = AivalaFraudPipeline()
+    monkeypatch.setattr(
+        "fraud_pipeline.detect_screen_rerecording",
+        lambda frames: (False, {"reason": "Screen moire detected", "error_code": "SCREEN_RECORDING_REJECTED"}),
+    )
+    monkeypatch.setattr(pipeline, "_extract_frames_from_video", lambda p, n_frames=12: [None] * 12)
+    monkeypatch.setattr(pipeline, "layer_1_exif_metadata_check", lambda p: (True, "OK"))
+    monkeypatch.setattr("fraud_pipeline.check_static_video_feed", lambda frames, motion_threshold=1.0: (True, "OK"))
+    monkeypatch.setattr(pipeline, "layer_2_perceptual_hashing", lambda p, db, sampled_frames=None: (True, "hash123"))
+
+    result = pipeline.run_5_layer_audit("dummy.mp4", [])
+    assert result["passed"] is False
+    assert "security_pipeline" in result
+    assert result["security_pipeline"]["stage3_ela"]["status"] == "FAILED"
+    assert "Screen moire detected" in result["security_pipeline"]["stage3_ela"]["details"]
