@@ -12,4 +12,8 @@ After every completed change:
 4. Push the commit to the `main` branch of the `origin` remote.
 5. Confirm that the push succeeded and report the commit hash.
 
+Whenever you claim a change was committed, always include the exact commit ID
+(full SHA or abbreviated hash) in the user-facing response. Do not say a change
+was committed without reporting that ID.
+
 Do not push unfinished work, failing changes, or changes to any other repository.
