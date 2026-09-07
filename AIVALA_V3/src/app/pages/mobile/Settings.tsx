@@ -4,17 +4,19 @@ import { Button } from "@/app/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/app/components/ui/card";
 import { Switch } from "@/app/components/ui/switch";
 import { Label } from "@/app/components/ui/label";
-import { ArrowLeft, Bell, Lock, Database, LogOut, Wifi, Shield, Trash2 } from "lucide-react";
+import { ArrowLeft, Bell, Lock, Database, LogOut, Wifi, Shield, Trash2, Moon } from "lucide-react";
 import { offlineStorage } from "@/app/utils/offlineStorage";
 import { useState } from "react";
 import { toast } from "sonner";
 import { getHFSpaceURL, setHFSpaceURL } from "@/app/utils/huggingFaceService";
+import { useTheme } from "next-themes";
 
 export default function Settings() {
   const navigate = useNavigate();
   const [storageInfo, setStorageInfo] = useState(offlineStorage.getStorageInfo());
   const [offlineMode, setOfflineMode] = useState(true);
   const [autoSync, setAutoSync] = useState(true);
+  const { theme, setTheme } = useTheme();
 
   const handleClearOfflineData = () => {
     if (confirm('Are you sure you want to clear all offline data? This cannot be undone.')) {
@@ -34,6 +36,29 @@ export default function Settings() {
       </div>
 
       <div className="p-6 space-y-4">
+        {/* Appearance */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Appearance</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <Moon className="h-5 w-5 text-gray-400" />
+                <div>
+                  <Label>Dark mode</Label>
+                  <p className="text-xs text-gray-500">Use a darker color scheme throughout the app</p>
+                </div>
+              </div>
+              <Switch
+                checked={theme === "dark"}
+                onCheckedChange={(checked) => setTheme(checked ? "dark" : "light")}
+                aria-label="Toggle dark mode"
+              />
+            </div>
+          </CardContent>
+        </Card>
+
         {/* Notifications */}
         <Card>
           <CardHeader>
