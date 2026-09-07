@@ -134,7 +134,7 @@ function persistResult(claimId: string, result: HFAnalysisResult, flagged = fals
         claim.id === claimId
           ? {
               ...claim,
-              status: result.isRejected ? "rejected" : flagged ? "flagged" : "approved",
+              status: result.isRejected || result.isNoDamage ? "rejected" : flagged ? "flagged" : "approved",
               estimatedCost: result.estimatedCost,
               fraudScore: result.fraudScore,
               summary: result.summary,
@@ -310,7 +310,8 @@ export async function verifyClaimWithSecurityBackend(
     };
   });
 
-  const isRejected = data.status === "NO_DAMAGE";
+  const isNoDamage = data.status === "NO_DAMAGE";
+  const isRejected = data.status === "REJECTED_FRAUD" || data.status === "FRAUD_DETECTED";
   const authenticityFlagged = pipeline.overallStatus === "FLAGGED" || screenRecordingCheck.flagged;
   const receipt = String(data.cryptographic_audit?.receipt || "");
   const result: HFAnalysisResult & { cryptographicLedgerReceipt?: string } = {
@@ -318,17 +319,18 @@ export async function verifyClaimWithSecurityBackend(
     detection_frames: detectionFrames,
     detections,
     source_frame: ai.source_frame,
-    summary: isRejected ? "No eligible vehicle damage detected" : ai.summary || "Analysis complete",
+    summary: isNoDamage ? "No eligible vehicle damage detected" : ai.summary || "Analysis complete",
     costBreakdown,
     estimatedCost: costBreakdown.totalCost,
     fraudAnalysis,
-    fraudScore: isRejected ? 100 : fraudAnalysis.totalScore,
+    fraudScore: fraudAnalysis.totalScore,
     damageAreas,
     isAiGenerated: true,
     damageContext,
     screenRecordingCheck,
+    isNoDamage,
     isRejected,
-    rejectionReason: isRejected ? "No repairable damage was confirmed in the evidence" : undefined,
+    rejectionReason: isNoDamage ? "No repairable damage was confirmed in the evidence" : undefined,
     modelReasoning: Array.isArray(ai.model_reasoning) ? ai.model_reasoning : [],
     fiveStageSecurity: pipeline,
     cryptographicLedgerReceipt: receipt,

@@ -98,6 +98,8 @@ export interface HFAnalysisResult {
   isAiGenerated: boolean;
   /** Whether the claim failed/rejected due to 0 damage detections */
   isRejected?: boolean;
+  /** A valid inference completed but found no eligible vehicle damage. */
+  isNoDamage?: boolean;
   /** Explanation if claim rejected */
   rejectionReason?: string;
   /** Detailed 3-line AI model decision rationale */

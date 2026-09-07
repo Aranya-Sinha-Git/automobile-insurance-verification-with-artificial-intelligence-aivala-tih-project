@@ -42,7 +42,12 @@ export default function ResultsScreen() {
   }
 
   // All values are derived from the AI analysis — no hardcoded fallbacks
-  const isRejected = aiData.isRejected || aiData.detections.length === 0;
+  const isNoDamage = Boolean(
+    aiData.isNoDamage ||
+      (aiData.detections.length === 0 &&
+        aiData.rejectionReason === "No repairable damage was confirmed in the evidence"),
+  );
+  const isRejected = Boolean(aiData.isRejected && !isNoDamage);
   const screenReplayFlag = Boolean(aiData.screenRecordingCheck?.flagged);
 
   if (isRejected) {
@@ -96,9 +101,9 @@ export default function ResultsScreen() {
     );
   }
 
-  const totalCost = isRejected ? 0 : aiData.estimatedCost;
+  const totalCost = isRejected || isNoDamage ? 0 : aiData.estimatedCost;
   const summary = aiData.summary;
-  const fraudScore = isRejected ? 100 : aiData.fraudScore;
+  const fraudScore = aiData.fraudScore;
   const fraudAnalysis = aiData.fraudAnalysis;
   const costBreakdown = aiData.costBreakdown;
   const damageContext = aiData.damageContext;
@@ -110,6 +115,8 @@ export default function ResultsScreen() {
   ).toLowerCase() as "low" | "medium" | "high";
   const riskBadge = screenReplayFlag
     ? { label: "Manual Review", className: "bg-orange-100 text-orange-700" }
+    : isNoDamage
+    ? { label: "No Damage Detected", className: "bg-blue-100 text-blue-700" }
     : isRejected
     ? { label: "Rejected (0 Detections)", className: "bg-red-100 text-red-700" }
     : {
@@ -120,6 +127,8 @@ export default function ResultsScreen() {
 
   const headerGradient = screenReplayFlag
     ? "from-orange-500 to-amber-600"
+    : isNoDamage
+    ? "from-blue-500 to-blue-600"
     : isRejected
     ? "from-red-600 to-red-700"
     : {
@@ -141,7 +150,7 @@ export default function ResultsScreen() {
           )}
           <div>
             <h1 className="text-2xl">
-              {isRejected ? "Claim Rejected / Failed" : screenReplayFlag || riskLevel === "high" ? "Claim Flagged" : "Claim Approved!"}
+              {isRejected ? "Claim Rejected / Failed" : isNoDamage ? "No Damage Confirmed" : screenReplayFlag || riskLevel === "high" ? "Claim Flagged" : "Claim Approved!"}
             </h1>
             <p className="text-white/70 text-sm">ID: {claimId}</p>
           </div>

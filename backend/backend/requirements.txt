@@ -10,3 +10,5 @@ scikit-image
 requests
 httpx
 firebase-admin>=6.5,<7
+# Browser MediaRecorder commonly emits WebM; PyAV is the first conversion fallback.
+av==18.1.0

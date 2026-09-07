@@ -1,4 +1,5 @@
 import { useNavigate } from "react-router";
+import { logoutFirebase } from "@/app/utils/firebase";
 import { Button } from "@/app/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/app/components/ui/card";
 import { Switch } from "@/app/components/ui/switch";
@@ -180,7 +181,14 @@ export default function Settings() {
           </CardContent>
         </Card>
 
-        <Button variant="destructive" className="w-full" onClick={() => navigate("/")}>
+        <Button
+          variant="destructive"
+          className="w-full"
+          onClick={async () => {
+            await logoutFirebase();
+            navigate("/", { replace: true });
+          }}
+        >
           <LogOut className="mr-2 h-4 w-4" />
           Logout
         </Button>
