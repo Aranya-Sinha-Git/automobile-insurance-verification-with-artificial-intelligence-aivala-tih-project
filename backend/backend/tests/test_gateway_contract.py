@@ -20,6 +20,13 @@ from main import app
 from auth import verify_bearer
 
 
+def test_serpapi_key_is_not_hard_coded() -> None:
+    """Reverse-search credentials must come from the environment, never source."""
+    source = (HERE / "fraud_pipeline.py").read_text(encoding="utf-8")
+    assert 'serpapi_key: str = "' not in source
+    assert 'os.getenv("SERPAPI_KEY", "' not in source
+
+
 def test_inference_payload_requires_a_detection_list() -> None:
     with pytest.raises(ValueError):
         _safe_inference_payload({"summary": "missing"})
