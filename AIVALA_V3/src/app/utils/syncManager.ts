@@ -58,7 +58,6 @@ class SyncManager {
 
         try {
           await this.uploadClaim(claim);
-          await offlineStorage.completeUpload(claimId);
           successCount += 1;
         } catch (error) {
           console.warn(`Deferred claim ${claimId} could not be submitted:`, error);
@@ -121,7 +120,7 @@ class SyncManager {
       { status: "processing" },
       false,
     );
-    await verifyClaimWithSecurityBackend(claim.videoBlob, claim.id);
+    await verifyClaimWithSecurityBackend(claim.videoBlob, claim.id, undefined, claim.videoFileName);
   }
 
   async syncNow(): Promise<{ success: number; failed: number }> {

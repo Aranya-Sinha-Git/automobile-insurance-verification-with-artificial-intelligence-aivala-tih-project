@@ -6,6 +6,8 @@ import uuid
 from pathlib import Path
 
 import pytest
+from fastapi import HTTPException
+from fastapi.testclient import TestClient
 
 HERE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(HERE))
@@ -14,6 +16,8 @@ os.environ.setdefault("AIVALA_SECURITY_DB", str(Path(__file__).parent / "test-se
 from fraud_pipeline import AivalaFraudPipeline
 from legacy_evidence import canonical_json, generate_audit_receipt
 from main import _safe_inference_payload
+from main import app
+from auth import verify_bearer
 
 
 def test_inference_payload_requires_a_detection_list() -> None:
@@ -41,3 +45,19 @@ def test_receipt_canonicalization_and_idempotency(monkeypatch: pytest.MonkeyPatc
     assert first == second
     with pytest.raises(ValueError):
         generate_audit_receipt(claim_id, {"a": "tampered"})
+
+
+def test_authentication_is_enforced_when_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AIVALA_AUTH_REQUIRED", "true")
+    with pytest.raises(HTTPException) as error:
+        verify_bearer(None)
+    assert error.value.status_code == 401
+
+
+def test_cors_allows_configured_local_origin() -> None:
+    response = TestClient(app).options(
+        "/verify-claim/",
+        headers={"Origin": "http://localhost:5173", "Access-Control-Request-Method": "POST"},
+    )
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "http://localhost:5173"

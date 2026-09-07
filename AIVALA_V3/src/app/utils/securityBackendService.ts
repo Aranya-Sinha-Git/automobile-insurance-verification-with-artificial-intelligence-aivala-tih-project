@@ -12,6 +12,7 @@ import {
 } from "./huggingFaceService";
 import { estimateRepairCost, type DamageContext } from "./repairCostEstimator";
 import { computeFraudScore } from "./fraudScoreEngine";
+import { auth } from "./firebase";
 
 export class SecurityGatewayError extends Error {
   constructor(
@@ -49,6 +50,21 @@ export async function waitForSecurityGatewayReady(): Promise<boolean> {
   }
 }
 
+async function authHeaders(): Promise<Record<string, string>> {
+  const token = await auth.currentUser?.getIdToken().catch(() => undefined);
+  return { "ngrok-skip-browser-warning": "true", ...(token ? { Authorization: `Bearer ${token}` } : {}) };
+}
+
+export function analysisStorageKey(claimId: string): string {
+  return `ai_analysis_${auth.currentUser?.uid || "local-development"}_${claimId}`;
+}
+
+export function readStoredAnalysis(claimId?: string): string | null {
+  if (!claimId) return null;
+  // Retain a one-way compatibility read for pre-auth local claims.
+  return localStorage.getItem(analysisStorageKey(claimId)) || localStorage.getItem(`ai_analysis_${claimId}`);
+}
+
 function severityToScore(severity = "none"): number {
   return ({
     none: 0,
@@ -63,7 +79,7 @@ function severityToScore(severity = "none"): number {
   ] ?? 0;
 }
 
-function normalizePipeline(raw: any): FiveStageSecurityDetails {
+export function normalizePipeline(raw: any): FiveStageSecurityDetails {
   const stage = (number: number, name: string, value: any): FiveStageSecurityDetails["stage1_exif"] => ({
     stage: Number(value?.stage) || number,
     name: String(value?.name || `Layer ${number}: ${name}`),
@@ -90,8 +106,26 @@ function normalizePipeline(raw: any): FiveStageSecurityDetails {
   };
 }
 
+export function parseStoredAnalysis(raw: string | null): HFAnalysisResult | null {
+  if (!raw) return null;
+  try {
+    const value = JSON.parse(raw);
+    if (!value || typeof value !== "object") return null;
+    return {
+      ...value,
+      detections: Array.isArray(value.detections) ? value.detections : [],
+      detection_frames: Array.isArray(value.detection_frames) ? value.detection_frames : [],
+      damageAreas: Array.isArray(value.damageAreas) ? value.damageAreas : [],
+      modelReasoning: Array.isArray(value.modelReasoning) ? value.modelReasoning.map(String) : [],
+      fiveStageSecurity: normalizePipeline(value.fiveStageSecurity),
+    } as HFAnalysisResult;
+  } catch {
+    return null;
+  }
+}
+
 function persistResult(claimId: string, result: HFAnalysisResult, flagged = false): void {
-  localStorage.setItem(`ai_analysis_${claimId}`, JSON.stringify(result));
+  localStorage.setItem(analysisStorageKey(claimId), JSON.stringify(result));
   const claims = JSON.parse(localStorage.getItem("claims") || "[]");
   localStorage.setItem(
     "claims",
@@ -116,6 +150,7 @@ export async function verifyClaimWithSecurityBackend(
   fileBlobOrFile: Blob | File,
   claimId: string,
   onStatus?: (msg: string) => void,
+  persistedFileName?: string,
 ): Promise<HFAnalysisResult & { cryptographicLedgerReceipt?: string }> {
   const endpoint = `${getSecurityBackendURL()}/verify-claim/`;
   const storedMeta = localStorage.getItem(`claim_meta_${claimId}`);
@@ -138,7 +173,7 @@ export async function verifyClaimWithSecurityBackend(
 
   const formData = new FormData();
   const filename =
-    fileBlobOrFile instanceof File ? fileBlobOrFile.name : `claim_${claimId}.mp4`;
+    fileBlobOrFile instanceof File ? fileBlobOrFile.name : persistedFileName || `claim_${claimId}.${fileBlobOrFile.type.includes("webm") ? "webm" : "mp4"}`;
   formData.append("file", fileBlobOrFile, filename);
   formData.append("claim_id", claimId);
   formData.append("incident_datetime", claimMeta.date || "");
@@ -157,7 +192,7 @@ export async function verifyClaimWithSecurityBackend(
       method: "POST",
       body: formData,
       signal: controller.signal,
-      headers: { "ngrok-skip-browser-warning": "true" },
+      headers: await authHeaders(),
     });
     if (!response.ok) {
       const body = await response.text().catch(() => "");
@@ -248,6 +283,8 @@ export async function verifyClaimWithSecurityBackend(
   };
   const costBreakdown = estimateRepairCost(detections, { damageContext });
   const fraudAnalysis = computeFraudScore(detections);
+  const sourceWidth = Math.max(1, Number(ai.source_dimensions?.width) || 1280);
+  const sourceHeight = Math.max(1, Number(ai.source_dimensions?.height) || 720);
 
   const damageAreas: DamageArea[] = detections.map((detection, index) => {
     const bbox = detection.bbox || [0, 0, 0, 0];
@@ -262,10 +299,10 @@ export async function verifyClaimWithSecurityBackend(
       severity: severityToScore(detection.severity),
       cost: costItem?.finalPartsCost || 0,
       coordinates: {
-        x: Math.max(2, Math.min(85, bbox[0] / 12.8 || 10)),
-        y: Math.max(2, Math.min(85, bbox[1] / 7.2 || 10)),
-        width: Math.max(10, Math.min(60, (bbox[2] - bbox[0]) / 12.8 || 20)),
-        height: Math.max(10, Math.min(60, (bbox[3] - bbox[1]) / 7.2 || 20)),
+        x: Math.max(0, Math.min(100, (Number(bbox[0]) / sourceWidth) * 100)),
+        y: Math.max(0, Math.min(100, (Number(bbox[1]) / sourceHeight) * 100)),
+        width: Math.max(0, Math.min(100, ((Number(bbox[2]) - Number(bbox[0])) / sourceWidth) * 100)),
+        height: Math.max(0, Math.min(100, ((Number(bbox[3]) - Number(bbox[1])) / sourceHeight) * 100)),
       },
       cropImage: matchingFrame?.image,
       severityLabel: detection.severity || "none",

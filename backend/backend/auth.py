@@ -6,6 +6,7 @@ can explicitly opt out; production must set AIVALA_AUTH_REQUIRED=1.
 from __future__ import annotations
 
 import os
+import json
 from typing import Any
 
 from fastapi import HTTPException
@@ -22,7 +23,17 @@ def verify_bearer(authorization: str | None) -> dict[str, Any]:
         raise HTTPException(status_code=401, detail="Authentication is required.")
     token = authorization.removeprefix("Bearer ").strip()
     try:
-        from firebase_admin import auth  # type: ignore
+        import firebase_admin  # type: ignore
+        from firebase_admin import auth, credentials  # type: ignore
+        try:
+            firebase_admin.get_app()
+        except ValueError:
+            service_account = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON", "").strip()
+            if service_account:
+                firebase_admin.initialize_app(credentials.Certificate(json.loads(service_account)))
+            else:
+                # Application Default Credentials are supported for managed hosts.
+                firebase_admin.initialize_app()
         decoded = auth.verify_id_token(token, check_revoked=True)
     except Exception as exc:
         raise HTTPException(status_code=401, detail="Authentication token is invalid or expired.") from exc

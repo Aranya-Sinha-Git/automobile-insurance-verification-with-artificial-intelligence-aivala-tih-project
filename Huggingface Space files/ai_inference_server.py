@@ -79,10 +79,10 @@ SEVERITY_LEVELS = {
 app = FastAPI(title="YOLO Damage Inference API")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=[],
+    allow_credentials=False,
+    allow_methods=["POST", "GET"],
+    allow_headers=["Content-Type"],
 )
 
 # Mount the static directory to serve static assets
@@ -201,7 +201,6 @@ async def _request_vlm_severity(
         logger.info("Calling local Qwen VLM severity endpoint once for %d detections from one frame.", len(items))
         async with httpx.AsyncClient(
             timeout=110.0,
-            verify=False,
             ) as client:
             health_url = VLM_SEVERITY_URL.replace("/severity", "/health")
             health = await client.get(health_url)
@@ -583,6 +582,9 @@ async def _annotate_and_predict(
         "detection_frames": best_severity_items,
         "detections": detections,
         "source_frame": best_frame_index,
+        # Detection boxes are pixel xyxy coordinates in this original frame.
+        "bbox_coordinate_space": "source_pixels_xyxy",
+        "source_dimensions": {"width": width, "height": height},
         "summary": summary,
         "model_reasoning": model_reasoning,
         "screen_recording_check": screen_recording_check,
@@ -710,4 +712,4 @@ if __name__ == "__main__":  # pragma: no cover
     import uvicorn
 
     port = int(os.getenv("AI_SERVER_PORT", "8001"))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    uvicorn.run(app, host=os.getenv("AIVALA_INTERNAL_HOST", "127.0.0.1"), port=port)

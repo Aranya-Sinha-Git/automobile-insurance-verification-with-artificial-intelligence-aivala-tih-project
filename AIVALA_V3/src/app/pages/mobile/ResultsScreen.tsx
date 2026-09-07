@@ -14,18 +14,15 @@ import {
 } from "lucide-react";
 import type { HFAnalysisResult } from "@/app/utils/huggingFaceService";
 import FiveStageSecurityCard from "@/app/components/security/FiveStageSecurityCard";
+import { parseStoredAnalysis, readStoredAnalysis } from "@/app/utils/securityBackendService";
 
 export default function ResultsScreen() {
   const { claimId } = useParams();
   const navigate = useNavigate();
 
   // Read AI analysis from localStorage
-  const storedAnalysis = claimId
-    ? localStorage.getItem(`ai_analysis_${claimId}`)
-    : null;
-  const aiData: HFAnalysisResult | null = storedAnalysis
-    ? JSON.parse(storedAnalysis)
-    : null;
+  const storedAnalysis = readStoredAnalysis(claimId);
+  const aiData: HFAnalysisResult | null = parseStoredAnalysis(storedAnalysis);
 
   // If no AI data exists, show an error state
   if (!aiData) {

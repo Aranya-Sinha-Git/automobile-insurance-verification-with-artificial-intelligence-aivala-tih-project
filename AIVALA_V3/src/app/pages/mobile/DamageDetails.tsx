@@ -5,18 +5,15 @@ import { Badge } from "@/app/components/ui/badge";
 import { ArrowLeft, Car, XCircle } from "lucide-react";
 import type { HFAnalysisResult } from "@/app/utils/huggingFaceService";
 import FiveStageSecurityCard from "@/app/components/security/FiveStageSecurityCard";
+import { parseStoredAnalysis, readStoredAnalysis } from "@/app/utils/securityBackendService";
 
 export default function DamageDetails() {
   const { claimId } = useParams();
   const navigate = useNavigate();
 
   // Read AI analysis — no mock data fallback
-  const storedAnalysis = claimId
-    ? localStorage.getItem(`ai_analysis_${claimId}`)
-    : null;
-  const aiData: HFAnalysisResult | null = storedAnalysis
-    ? JSON.parse(storedAnalysis)
-    : null;
+  const storedAnalysis = readStoredAnalysis(claimId);
+  const aiData: HFAnalysisResult | null = parseStoredAnalysis(storedAnalysis);
 
   const damageAreas = aiData?.damageAreas || [];
   const annotatedImage = aiData?.annotated_image;

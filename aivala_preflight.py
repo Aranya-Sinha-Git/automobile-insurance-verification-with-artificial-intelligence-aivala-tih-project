@@ -27,6 +27,12 @@ QWEN_ADAPTER_DIR = ROOT_DIR / "models" / "qwen3-vl-4b-car-damage-lora"
 QWEN_BASE_MODEL_DIR = ROOT_DIR / "models" / "qwen3-vl-4b-instruct"
 YOLO_MODEL_PATH = ROOT_DIR / "final_best.pt"
 DB_PATH = ROOT_DIR / "backend" / "backend" / "data" / "aivala_security.sqlite3"
+
+
+def security_db_path() -> Path:
+    """Use the same explicit override as the forensic gateway."""
+    configured = os.environ.get("AIVALA_SECURITY_DB", "").strip()
+    return Path(configured).expanduser() if configured else DB_PATH
 CHECKSUMS_PATH = ROOT_DIR / "model_checksums.json"
 
 REQUIRED_IMPORTS = {
@@ -279,11 +285,12 @@ def run_preflight(*, strict: bool = True, check_ports: bool = True) -> bool:
     checks.append(Check("NGROK_DOMAIN", bool(domain), domain or "missing; configure the persistent dev domain", required=tunnel_enabled))
 
     try:
-        DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-        probe = DB_PATH.with_suffix(DB_PATH.suffix + ".preflight")
+        resolved_db = security_db_path()
+        resolved_db.parent.mkdir(parents=True, exist_ok=True)
+        probe = resolved_db.with_suffix(resolved_db.suffix + ".preflight")
         probe.write_text("preflight", encoding="utf-8")
         probe.unlink()
-        checks.append(Check("Database directory", True, str(DB_PATH.parent)))
+        checks.append(Check("Database directory", True, str(resolved_db.parent)))
     except Exception as exc:
         checks.append(Check("Database directory", False, str(exc)))
     for directory in (ROOT_DIR / "backend" / "backend" / "data", ROOT_DIR / ".tools", ROOT_DIR / "AIVALA_V3"):

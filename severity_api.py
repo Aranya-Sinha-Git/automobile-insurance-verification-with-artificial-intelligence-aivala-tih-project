@@ -71,10 +71,10 @@ SEVERITY_SCHEMA = {
 app = FastAPI(title="Local Qwen Severity API")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=[],
+    allow_credentials=False,
+    allow_methods=["POST", "GET"],
+    allow_headers=["Content-Type"],
 )
 
 
@@ -417,4 +417,4 @@ if __name__ == "__main__":
     port = int(os.getenv("PORT", "7860"))
     print(f"Starting Qwen Severity Server on port {port}...")
     _load_qwen()
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    uvicorn.run(app, host=os.getenv("AIVALA_INTERNAL_HOST", "127.0.0.1"), port=port)

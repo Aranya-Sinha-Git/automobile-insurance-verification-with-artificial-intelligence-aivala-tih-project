@@ -6,6 +6,7 @@ import { Label } from "@/app/components/ui/label";
 import { ArrowLeft, Wrench, Banknote, Zap, Clock } from "lucide-react";
 import { useState } from "react";
 import type { HFAnalysisResult } from "@/app/utils/huggingFaceService";
+import { parseStoredAnalysis, readStoredAnalysis } from "@/app/utils/securityBackendService";
 
 export default function SettlementScreen() {
   const { claimId } = useParams();
@@ -13,12 +14,8 @@ export default function SettlementScreen() {
   const [selected, setSelected] = useState("repair");
 
   // Read AI analysis for dynamic cost values
-  const storedAnalysis = claimId
-    ? localStorage.getItem(`ai_analysis_${claimId}`)
-    : null;
-  const aiData: HFAnalysisResult | null = storedAnalysis
-    ? JSON.parse(storedAnalysis)
-    : null;
+  const storedAnalysis = readStoredAnalysis(claimId);
+  const aiData: HFAnalysisResult | null = parseStoredAnalysis(storedAnalysis);
 
   const totalCost = aiData?.estimatedCost || 0;
   const cashPayout = Math.round(totalCost * 0.95);

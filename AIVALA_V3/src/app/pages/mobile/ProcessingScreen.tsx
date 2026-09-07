@@ -78,7 +78,7 @@ export default function ProcessingScreen() {
         const result = await verifyClaimWithSecurityBackend(videoFile, claimId!, (msg) => {
           if (cancelled) return;
           setStatusMsg(msg);
-        });
+        }, savedClaim?.videoFileName);
 
         if (cancelled) return;
 

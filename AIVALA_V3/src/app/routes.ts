@@ -3,6 +3,7 @@ import Root from "@/app/components/Root";
 import MobileApp from "@/app/pages/mobile/MobileApp";
 import WebDashboard from "@/app/pages/web/WebDashboard";
 import NotFound from "@/app/components/NotFound";
+import RequireAuth from "@/app/components/RequireAuth";
 
 // Mobile app routes
 import Welcome from "@/app/pages/mobile/Welcome";
@@ -44,18 +45,20 @@ export const router = createHashRouter([
         children: [
           { path: "login", Component: Login },
           { path: "register", Component: Register },
-          { path: "dashboard", Component: Dashboard },
-          { path: "new-claim", Component: NewClaimType },
-          { path: "video-recording", Component: VideoRecording },
-          { path: "claim-details", Component: ClaimDetails },
-          { path: "claim-submission", Component: ClaimSubmission },
-          { path: "processing/:claimId", Component: ProcessingScreen },
-          { path: "results/:claimId", Component: ResultsScreen },
-          { path: "damage/:claimId", Component: DamageDetails },
-          { path: "settlement/:claimId", Component: SettlementScreen },
-          { path: "history", Component: ClaimsHistory },
-          { path: "profile", Component: Profile },
-          { path: "settings", Component: Settings },
+          { Component: RequireAuth, children: [
+            { path: "dashboard", Component: Dashboard },
+            { path: "new-claim", Component: NewClaimType },
+            { path: "video-recording", Component: VideoRecording },
+            { path: "claim-details", Component: ClaimDetails },
+            { path: "claim-submission", Component: ClaimSubmission },
+            { path: "processing/:claimId", Component: ProcessingScreen },
+            { path: "results/:claimId", Component: ResultsScreen },
+            { path: "damage/:claimId", Component: DamageDetails },
+            { path: "settlement/:claimId", Component: SettlementScreen },
+            { path: "history", Component: ClaimsHistory },
+            { path: "profile", Component: Profile },
+            { path: "settings", Component: Settings },
+          ] },
         ],
       },
       

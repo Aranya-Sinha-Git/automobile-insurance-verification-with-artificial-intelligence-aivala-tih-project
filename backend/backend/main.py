@@ -16,6 +16,7 @@ import tempfile
 import time
 import hashlib
 import json
+import re
 import uuid
 from pathlib import Path
 from typing import Any, List
@@ -44,7 +45,7 @@ from fraud_pipeline import (
     store_fingerprint,
 )
 from legacy_evidence import generate_audit_receipt
-from auth import require_operator
+from auth import require_operator, verify_bearer
 
 logger = logging.getLogger("AivalaFraudAPI")
 logging.basicConfig(level=logging.INFO)
@@ -80,6 +81,59 @@ def startup_event():
         logger.info(f"Startup: Loaded {len(historical_phash_db)} pHash records from SQLite DB")
     except Exception as exc:
         logger.warning(f"Startup DB load error: {exc}")
+    try:
+        with _connect() as connection:
+            connection.execute("""CREATE TABLE IF NOT EXISTS verification_transactions (
+                request_id TEXT PRIMARY KEY, claim_id TEXT NOT NULL, owner_id TEXT NOT NULL,
+                state TEXT NOT NULL, outcome_json TEXT, created_at REAL NOT NULL, updated_at REAL NOT NULL
+            )""")
+            connection.execute("""CREATE TABLE IF NOT EXISTS verification_results (
+                claim_id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, response_json TEXT NOT NULL, created_at REAL NOT NULL
+            )""")
+            connection.commit()
+    except Exception:
+        logger.exception("Unable to initialize verification transaction storage")
+
+
+def _track(request_id: str, claim_id: str, owner_id: str, state: str, outcome: dict[str, Any] | None = None) -> None:
+    """Keep a redacted local ledger and durable terminal transaction record."""
+    now = time.time()
+    CLAIM_HISTORY_LEDGER[request_id] = {"request_id": request_id, "claim_id": claim_id, "owner_id": owner_id, "state": state, "updated_at": now}
+    try:
+        with _connect() as connection:
+            connection.execute("""CREATE TABLE IF NOT EXISTS verification_transactions (
+                request_id TEXT PRIMARY KEY, claim_id TEXT NOT NULL, owner_id TEXT NOT NULL,
+                state TEXT NOT NULL, outcome_json TEXT, created_at REAL NOT NULL, updated_at REAL NOT NULL
+            )""")
+            existing = connection.execute("SELECT claim_id, owner_id FROM verification_transactions WHERE request_id=?", (request_id,)).fetchone()
+            if existing and existing != (claim_id, owner_id):
+                raise ValueError("request identifier collision")
+            connection.execute("""INSERT INTO verification_transactions (request_id, claim_id, owner_id, state, outcome_json, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(request_id) DO UPDATE SET state=excluded.state, outcome_json=excluded.outcome_json, updated_at=excluded.updated_at""",
+                (request_id, claim_id, owner_id, state, json.dumps(outcome, sort_keys=True) if outcome else None, now, now))
+            connection.commit()
+    except Exception:
+        logger.exception("Unable to persist transaction tracking request=%s", request_id)
+
+
+def _stored_result(claim_id: str, owner_id: str) -> dict[str, Any] | None:
+    try:
+        with _connect() as connection:
+            connection.execute("""CREATE TABLE IF NOT EXISTS verification_results (
+                claim_id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, response_json TEXT NOT NULL, created_at REAL NOT NULL
+            )""")
+            row = connection.execute("SELECT owner_id, response_json FROM verification_results WHERE claim_id=?", (claim_id,)).fetchone()
+        if not row:
+            return None
+        if row[0] != owner_id:
+            raise HTTPException(status_code=403, detail="This claim belongs to another account.")
+        return json.loads(row[1])
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Unable to load existing claim result")
+        return None
 
 
 def _safe_inference_payload(payload: Any) -> dict[str, Any]:
@@ -190,11 +244,18 @@ def health():
 
 @app.get("/tracking-logs/")
 def get_all_logs(authorization: str | None = Header(None), limit: int = 50, offset: int = 0):
-    """Operator-only, process-local transaction history without evidence data."""
+    """Operator-only, redacted and paginated transaction history."""
     require_operator(authorization)
     bounded_limit = min(max(limit, 1), 100)
-    records = list(CLAIM_HISTORY_LEDGER.values())[max(offset, 0):max(offset, 0) + bounded_limit]
-    return {"total_records": len(CLAIM_HISTORY_LEDGER), "records": records, "offset": max(offset, 0), "limit": bounded_limit}
+    try:
+        with _connect() as connection:
+            total = connection.execute("SELECT COUNT(*) FROM verification_transactions").fetchone()[0]
+            rows = connection.execute("SELECT request_id, claim_id, owner_id, state, created_at, updated_at FROM verification_transactions ORDER BY updated_at DESC LIMIT ? OFFSET ?", (bounded_limit, max(offset, 0))).fetchall()
+        records = [{"request_id": row[0], "claim_id": row[1], "owner_id": row[2], "state": row[3], "created_at": row[4], "updated_at": row[5]} for row in rows]
+    except Exception:
+        records = list(CLAIM_HISTORY_LEDGER.values())[max(offset, 0):max(offset, 0) + bounded_limit]
+        total = len(CLAIM_HISTORY_LEDGER)
+    return {"total_records": total, "records": records, "offset": max(offset, 0), "limit": bounded_limit}
 
 
 @app.post("/verify-claim")
@@ -214,6 +275,7 @@ async def verify_claim(
     latitude: str = Form(None),
     longitude: str = Form(None),
     vehicle_number: str = Form(None),
+    authorization: str | None = Header(None),
 ):
     """5-Layer Digital Forensics Fraud Detection & Verification Endpoint."""
     upload_file = file or video
@@ -221,6 +283,8 @@ async def verify_claim(
     converted_mp4_path: str | None = None
     current_claim_id = "UNKNOWN"
     request_id = str(uuid.uuid4())
+    identity = verify_bearer(authorization)
+    owner_id = identity["uid"]
 
     try:
         if not upload_file or (file is not None and video is not None):
@@ -237,7 +301,10 @@ async def verify_claim(
 
         cid_clean = re.sub(r"[^A-Za-z0-9_-]", "", str(claim_id or ""))[:80]
         current_claim_id = cid_clean if cid_clean else f"CLM-LOCAL-{int(time.time() * 1000)}"
-        CLAIM_HISTORY_LEDGER[request_id] = {"request_id": request_id, "claim_id": current_claim_id, "state": "UPLOADING", "received_at": time.time()}
+        prior_result = _stored_result(current_claim_id, owner_id)
+        if prior_result is not None:
+            return prior_result
+        _track(request_id, current_claim_id, owner_id, "UPLOADING")
         filename = upload_file.filename or "evidence.mp4"
         suffix = Path(filename).suffix.lower() or ".mp4"
 
@@ -247,6 +314,7 @@ async def verify_claim(
                 target.write(chunk)
 
         if not temp_path or os.path.getsize(temp_path) == 0:
+            _track(request_id, current_claim_id, owner_id, "INVALID_EVIDENCE")
             return JSONResponse(
                 status_code=400,
                 content={
@@ -270,6 +338,9 @@ async def verify_claim(
                 analysis_filename = f"{Path(filename).stem}.mp4"
                 analysis_content_type = "video/mp4"
                 logger.info(f"Successfully converted WebM to MP4: {audit_target_path}")
+            else:
+                _track(request_id, current_claim_id, owner_id, "CONVERSION_FAILURE")
+                return JSONResponse(status_code=422, content={"status": "REJECTED_FRAUD", "claim_id": current_claim_id, "request_id": request_id, "error_code": "WEBM_CONVERSION_FAILED", "reason": "The evidence video could not be converted for analysis."})
 
         logger.info(f"Executing 5-layer audit on target file {audit_target_path} for claim {current_claim_id}")
 
@@ -277,7 +348,7 @@ async def verify_claim(
         audit_result = await run_in_threadpool(
             fraud_pipeline.run_5_layer_audit, audit_target_path, historical_phash_db, damage_location or None
         )
-        CLAIM_HISTORY_LEDGER[request_id]["state"] = "FORENSICS_COMPLETE"
+        _track(request_id, current_claim_id, owner_id, "FORENSICS_COMPLETE")
 
         if not audit_result.get("passed"):
             failed_layer = audit_result.get("failed_layer", 1)
@@ -287,6 +358,7 @@ async def verify_claim(
             
             # User-facing security generic reason (hides internal layer specifics)
             generic_user_reason = "Verification Failed: Evidence video did not pass security verification guidelines. Please record a new video."
+            _track(request_id, current_claim_id, owner_id, "REJECTED_FORENSICS")
             
             return JSONResponse(
                 status_code=400,
@@ -316,10 +388,12 @@ async def verify_claim(
         try:
             ai_result = await _forward_to_inference(audit_target_path, analysis_filename, analysis_content_type, context)
         except TimeoutError:
+            _track(request_id, current_claim_id, owner_id, "INFERENCE_TIMEOUT")
             return JSONResponse(status_code=504, content={"status": "INFRA_FAILURE", "claim_id": current_claim_id, "request_id": request_id, "error_code": "INFERENCE_TIMEOUT", "reason": "Damage analysis timed out. Your evidence can be retried.", "security_pipeline": audit_result.get("security_pipeline", {})})
         except (ValueError, RuntimeError):
+            _track(request_id, current_claim_id, owner_id, "INFERENCE_UNAVAILABLE")
             return JSONResponse(status_code=503, content={"status": "INFRA_FAILURE", "claim_id": current_claim_id, "request_id": request_id, "error_code": "INFERENCE_UNAVAILABLE", "reason": "Damage analysis is temporarily unavailable. Your evidence can be retried.", "security_pipeline": audit_result.get("security_pipeline", {})})
-        CLAIM_HISTORY_LEDGER[request_id]["state"] = "INFERENCE_COMPLETE"
+        _track(request_id, current_claim_id, owner_id, "INFERENCE_COMPLETE")
 
         # Final persistence is a required terminal step: never report approval if it fails.
         try:
@@ -342,12 +416,13 @@ async def verify_claim(
             logger.info(f"Successfully stored fingerprint for claim {current_claim_id} in SQLite database")
         except Exception as fp_err:
             logger.exception("Could not save fingerprint for claim %s", current_claim_id)
+            _track(request_id, current_claim_id, owner_id, "PERSISTENCE_FAILURE")
             return JSONResponse(status_code=503, content={"status": "INFRA_FAILURE", "claim_id": current_claim_id, "request_id": request_id, "error_code": "PERSISTENCE_FAILURE", "reason": "Verification could not be finalized. Your evidence can be retried.", "security_pipeline": audit_result.get("security_pipeline", {})})
 
         outcome = "NO_DAMAGE" if not ai_result.get("detections") else "APPROVED_AUTHENTIC"
-        CLAIM_HISTORY_LEDGER[request_id]["state"] = outcome
+        _track(request_id, current_claim_id, owner_id, outcome, {"status": outcome, "receipt": receipt.get("receipt", "")})
         logger.info("Claim %s completed with %s", current_claim_id, outcome)
-        return {
+        response_payload = {
             "status": outcome,
             "claim_id": current_claim_id,
             "request_id": request_id,
@@ -359,9 +434,22 @@ async def verify_claim(
             "analysis_evidence": {"sha256": hashlib.sha256(Path(audit_target_path).read_bytes()).hexdigest(), "filename": analysis_filename, "content_type": analysis_content_type, "converted": bool(converted_mp4_path)},
             "cryptographic_audit": receipt,
         }
+        try:
+            with _connect() as connection:
+                connection.execute("""CREATE TABLE IF NOT EXISTS verification_results (
+                    claim_id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, response_json TEXT NOT NULL, created_at REAL NOT NULL
+                )""")
+                connection.execute("INSERT INTO verification_results (claim_id, owner_id, response_json, created_at) VALUES (?, ?, ?, ?)", (current_claim_id, owner_id, json.dumps(response_payload, sort_keys=True), time.time()))
+                connection.commit()
+        except Exception:
+            logger.exception("Could not persist terminal claim result for %s", current_claim_id)
+            _track(request_id, current_claim_id, owner_id, "PERSISTENCE_FAILURE")
+            return JSONResponse(status_code=503, content={"status": "INFRA_FAILURE", "claim_id": current_claim_id, "request_id": request_id, "error_code": "PERSISTENCE_FAILURE", "reason": "Verification could not be finalized. Your evidence can be retried.", "security_pipeline": audit_result.get("security_pipeline", {})})
+        return response_payload
 
     except Exception:
         logger.exception("Unhandled verification error for claim=%s request=%s", current_claim_id, request_id)
+        _track(request_id, current_claim_id, owner_id, "INFRA_FAILURE")
         return JSONResponse(
             status_code=500,
             content={

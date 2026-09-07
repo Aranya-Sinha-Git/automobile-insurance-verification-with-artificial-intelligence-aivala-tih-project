@@ -23,7 +23,6 @@ from fraud_pipeline import (
     AivalaFraudPipeline,
     fingerprint_video,
     get_all_historical_fingerprints,
-    get_all_historical_phashes,
     store_fingerprint,
 )
 
@@ -61,7 +60,7 @@ def main():
     if result.get("passed"):
         print("• Status  : APPROVED_AUTHENTIC")
         print(f"• pHash   : {result.get('phash')}")
-        print("• Message : All 5 forensic layers passed successfully")
+        print("• Message : Forensic layers completed (a local-only Layer 5 may be reported as SKIPPED)")
         
         # Save fingerprint to database to prevent future duplicate submissions
         try:
@@ -69,13 +68,15 @@ def main():
             store_fingerprint(claim_id, fp)
             print(f"• Database: Fingerprint saved for Claim '{claim_id}' (Duplicate shield ACTIVE)")
         except Exception as store_err:
-            print(f"• Database Warning: Unable to persist fingerprint: {store_err}")
+            print(f"• Database Error: unable to persist fingerprint: {store_err}")
+            return 2
     else:
         print("• Status       : REJECTED_FRAUD")
         print(f"• Failed Layer : Layer {result.get('failed_layer')}")
         print(f"• Reason       : {result.get('reason')}")
+        return 1
 
     print("=" * 60)
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main() or 0)
