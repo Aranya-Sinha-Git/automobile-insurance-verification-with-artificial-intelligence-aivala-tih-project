@@ -322,7 +322,7 @@ export default function ResultsScreen() {
             <Home className="mr-2 h-4 w-4" />
             Home
           </Button>
-          {!screenReplayFlag && (
+          {!screenReplayFlag && !isNoDamage && (
             <Button
               className="flex-1"
               onClick={() => navigate(`/app/settlement/${claimId}`)}

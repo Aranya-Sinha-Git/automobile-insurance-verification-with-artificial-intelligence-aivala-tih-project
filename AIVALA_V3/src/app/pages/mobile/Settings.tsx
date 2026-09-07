@@ -11,6 +11,27 @@ import { toast } from "sonner";
 import { getHFSpaceURL, setHFSpaceURL } from "@/app/utils/huggingFaceService";
 import { useTheme } from "next-themes";
 
+function clearUserClaimData() {
+  // Claims and offline evidence are device-local, so clear them at the
+  // account boundary to prevent the next Firebase user seeing prior data.
+  offlineStorage.clearAll();
+  const keysToRemove = [
+    "user",
+    "claims",
+    "pending_claim_draft",
+    "current_claim_draft_id",
+    "claimCapture",
+  ];
+  Object.keys(localStorage).forEach((key) => {
+    if (key.startsWith("ai_analysis_") || key.startsWith("claim_meta_")) {
+      keysToRemove.push(key);
+    }
+  });
+  keysToRemove.forEach((key) => localStorage.removeItem(key));
+  delete (window as any).currentClaimVideoFile;
+  delete (window as any).currentClaimThumbnail;
+}
+
 export default function Settings() {
   const navigate = useNavigate();
   const [storageInfo, setStorageInfo] = useState(offlineStorage.getStorageInfo());
@@ -210,6 +231,7 @@ export default function Settings() {
           variant="destructive"
           className="w-full"
           onClick={async () => {
+            clearUserClaimData();
             await logoutFirebase();
             navigate("/", { replace: true });
           }}

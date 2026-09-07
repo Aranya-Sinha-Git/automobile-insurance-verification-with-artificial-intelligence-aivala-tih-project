@@ -65,6 +65,11 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type", "ngrok-skip-browser-warning"],
 )
 
+# In-memory fallback for transaction tracking when the durable SQLite ledger is
+# unavailable.  The durable store remains authoritative; this prevents the
+# error path itself from raising NameError and masking the original failure.
+CLAIM_HISTORY_LEDGER: dict[str, dict[str, Any]] = {}
+
 # Initialize pipeline and load historical pHash DB from persistent SQLite database
 fraud_pipeline = AivalaFraudPipeline()
 try:
@@ -341,7 +346,7 @@ async def verify_claim(
                 logger.info(f"Successfully converted WebM to MP4: {audit_target_path}")
             else:
                 _track(request_id, current_claim_id, owner_id, "CONVERSION_FAILURE")
-                return JSONResponse(status_code=422, content={"status": "REJECTED_FRAUD", "claim_id": current_claim_id, "request_id": request_id, "error_code": "WEBM_CONVERSION_FAILED", "reason": "The evidence video could not be converted for analysis."})
+                return JSONResponse(status_code=503, content={"status": "INFRA_FAILURE", "claim_id": current_claim_id, "request_id": request_id, "error_code": "WEBM_CONVERSION_FAILED", "reason": "The evidence video could not be converted for analysis. Your evidence can be retried."})
 
         logger.info(f"Executing 5-layer audit on target file {audit_target_path} for claim {current_claim_id}")
 

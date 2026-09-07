@@ -5,6 +5,7 @@ import { RadioGroup, RadioGroupItem } from "@/app/components/ui/radio-group";
 import { Label } from "@/app/components/ui/label";
 import { ArrowLeft, Wrench, Banknote, Zap, Clock } from "lucide-react";
 import { useState } from "react";
+import { toast } from "sonner";
 import type { HFAnalysisResult } from "@/app/utils/huggingFaceService";
 import { parseStoredAnalysis, readStoredAnalysis } from "@/app/utils/securityBackendService";
 
@@ -16,9 +17,42 @@ export default function SettlementScreen() {
   // Read AI analysis for dynamic cost values
   const storedAnalysis = readStoredAnalysis(claimId);
   const aiData: HFAnalysisResult | null = parseStoredAnalysis(storedAnalysis);
+  const isNoDamage = Boolean(aiData?.isNoDamage);
 
   const totalCost = aiData?.estimatedCost || 0;
   const cashPayout = Math.round(totalCost * 0.95);
+
+  const confirmSettlement = () => {
+    if (!claimId) return;
+    if (isNoDamage) {
+      toast.info("No settlement is available because no repairable damage was detected.");
+      navigate("/app/dashboard");
+      return;
+    }
+    try {
+      const claims = JSON.parse(localStorage.getItem("claims") || "[]");
+      localStorage.setItem(
+        "claims",
+        JSON.stringify(
+          claims.map((claim: any) =>
+            claim.id === claimId
+              ? {
+                  ...claim,
+                  settlementMethod: selected,
+                  settlementStatus: "confirmed",
+                  settlementConfirmedAt: new Date().toISOString(),
+                }
+              : claim,
+          ),
+        ),
+      );
+      toast.success("Settlement preference saved.");
+    } catch {
+      toast.error("Unable to save your settlement preference.");
+      return;
+    }
+    navigate("/app/dashboard");
+  };
 
   return (
     <div className="min-h-screen bg-gray-50 pb-24">
@@ -63,7 +97,9 @@ export default function SettlementScreen() {
                           <strong>Estimated Value:</strong>{" "}
                           {totalCost > 0
                             ? `₹${totalCost.toLocaleString()} (full repair value)`
-                            : "Pending AI analysis"}
+                            : isNoDamage
+                              ? "₹0 (no repairable damage detected)"
+                              : "Pending AI analysis"}
                         </p>
                       </div>
                     </div>
@@ -102,7 +138,9 @@ export default function SettlementScreen() {
                           <strong>Settlement Amount:</strong>{" "}
                           {cashPayout > 0
                             ? `₹${cashPayout.toLocaleString()} (95% of estimate)`
-                            : "Pending AI analysis"}
+                            : isNoDamage
+                              ? "₹0 (no repairable damage detected)"
+                              : "Pending AI analysis"}
                         </p>
                       </div>
                     </div>
@@ -131,8 +169,8 @@ export default function SettlementScreen() {
       </div>
 
       <div className="p-4 bg-white border-t sticky bottom-0 z-10">
-        <Button className="w-full" size="lg" onClick={() => navigate("/app/dashboard")}>
-          Confirm Settlement
+        <Button className="w-full" size="lg" onClick={confirmSettlement} disabled={isNoDamage}>
+          {isNoDamage ? "No Settlement Available" : "Confirm Settlement"}
         </Button>
       </div>
     </div>
