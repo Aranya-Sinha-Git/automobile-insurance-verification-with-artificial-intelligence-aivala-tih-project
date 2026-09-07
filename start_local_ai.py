@@ -50,7 +50,7 @@ SECURITY_BACKEND_DIR = ROOT_DIR / "backend" / "backend"
 YOLO_CONFIG_DIR = SECURITY_BACKEND_DIR / "data" / "ultralytics"
 SEVERITY_PORT = 7860
 INFERENCE_PORT = 8001
-SECURITY_PORT = 8000
+SECURITY_PORT = int(os.getenv("AIVALA_SECURITY_PORT", "8000"))
 
 
 def _truthy(value: str | None) -> bool:

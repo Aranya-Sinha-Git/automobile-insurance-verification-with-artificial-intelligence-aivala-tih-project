@@ -143,7 +143,7 @@ export default function Settings() {
                   localStorage.removeItem("security_backend_url");
                   setHFSpaceURL(e.target.value);
                 }}
-                placeholder="https://xxxx.ngrok-free.app or http://localhost:8000"
+                placeholder="https://curfew-stump-tripod.ngrok-free.dev"
               />
             </div>
             <div className="flex flex-wrap gap-2 text-xs">
@@ -153,13 +153,13 @@ export default function Settings() {
                 onClick={() => {
                   const input = document.querySelector('input[placeholder*="ngrok"]') as HTMLInputElement;
                   if (input) {
-                    input.value = "http://localhost:8000";
-                    localStorage.setItem("hf_space_url", "http://localhost:8000");
+                    input.value = "https://curfew-stump-tripod.ngrok-free.dev";
+                    localStorage.setItem("hf_space_url", "https://curfew-stump-tripod.ngrok-free.dev");
                     localStorage.removeItem("security_backend_url");
                   }
                 }}
               >
-                Set to Local Gateway (http://localhost:8000)
+                Use AIVALA ngrok gateway
               </button>
               <button
                 type="button"
@@ -176,7 +176,7 @@ export default function Settings() {
               </button>
             </div>
             <p className="text-xs text-gray-500">
-              Paste your <strong>ngrok HTTPS Tunnel URL</strong> (e.g. <code>https://xxxx.ngrok-free.app</code>) here to connect mobile devices anywhere to your local PC GPU!
+              APK communication uses the <strong>AIVALA ngrok HTTPS gateway</strong> so the device never targets your PC's localhost address.
             </p>
           </CardContent>
         </Card>

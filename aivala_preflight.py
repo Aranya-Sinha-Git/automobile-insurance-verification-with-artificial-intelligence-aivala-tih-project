@@ -256,7 +256,8 @@ def run_preflight(*, strict: bool = True, check_ports: bool = True) -> bool:
         checks.append(Check("PyTorch CUDA", False, str(exc)))
 
     if check_ports:
-        for port in (7860, 8001, 8000):
+        security_port = int(os.getenv("AIVALA_SECURITY_PORT", "8000"))
+        for port in (7860, 8001, security_port):
             available = _port_available(port)
             checks.append(Check(f"Port {port}", available, "available" if available else "already in use"))
 

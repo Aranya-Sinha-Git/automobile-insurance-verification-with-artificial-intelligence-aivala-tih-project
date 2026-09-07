@@ -91,7 +91,7 @@ The launcher loads device-local settings from the gitignored `.env.local` file w
 | --- | --- | --- | --- |
 | **Qwen Severity API** | `7860` | `http://localhost:7860/health` | Vision-Language Model severity engine |
 | **YOLO Inference API** | `8001` | `http://localhost:8001/health` | Damage localization & segmentation |
-| **Evidence Gateway** | `8000` | `http://localhost:8000/` | FastAPI gateway & 5-layer forensic engine |
+| **Evidence Gateway** | `AIVALA_SECURITY_PORT` (default `8000`) | `http://localhost:<port>/` | FastAPI gateway & 5-layer forensic engine |
 
 ---
 
@@ -101,7 +101,7 @@ The pre-compiled Android debug binary is located at `AIVALA_V3/app-debug.apk`.
 
 1. Install `AIVALA_V3/app-debug.apk` on your Android device.
 2. Ensure local services are running (`python start_local_ai.py`).
-3. Open **Settings** in the app and set the **AI Server URL** to the HTTPS Tunnel URL printed by the launcher (or `http://localhost:8000` for emulator access).
+3. The APK defaults to the configured AIVALA ngrok HTTPS URL. The launcher must be running and print the active tunnel URL; update it in **Settings** only if the ngrok domain changes.
 
 > **Important**: Uploads from the device gallery or external files are strictly disabled. Video media must be recorded live in-app.
 
@@ -120,7 +120,7 @@ cd android
 ## Troubleshooting
 
 - **GPU Acceleration**: Ensure NVIDIA drivers and PyTorch CUDA support are properly installed for real-time model performance.
-- **Port Conflicts**: Verify ports `7860`, `8001`, and `8000` are unblocked before launching `start_local_ai.py`.
+- **Port Conflicts**: Verify ports `7860`, `8001`, and the configured `AIVALA_SECURITY_PORT` are unblocked before launching `start_local_ai.py`.
 - **ngrok authentication/domain**: Configure `NGROK_AUTHTOKEN` and `NGROK_DOMAIN` in `.env.local`. A missing or invalid persistent domain stops startup so the mobile app is never pointed at an unverified endpoint.
 - **FFmpeg/FFprobe**: Run `python setup_local_ai.py` to install the managed Windows build when full container metadata is needed. They are optional for the prototype; without FFprobe, OpenCV metadata fallback is used.
 - **Face detector**: `facenet-pytorch==2.6.0` is pinned separately for later installation. The prototype uses the verified OpenCV YuNet/ONNX/Haar fallback and reports that reduced detector mode in preflight.

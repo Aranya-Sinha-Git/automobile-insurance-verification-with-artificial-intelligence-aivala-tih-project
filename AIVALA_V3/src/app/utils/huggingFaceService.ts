@@ -117,7 +117,7 @@ export interface HFAnalysisResult {
 // ---------------------------------------------------------------------------
 
 export const DEFAULT_GATEWAY_URL = String(
-  import.meta.env.VITE_GATEWAY_URL || "http://127.0.0.1:8000",
+  import.meta.env.VITE_GATEWAY_URL || "https://curfew-stump-tripod.ngrok-free.dev",
 ).replace(/\/+$/, "");
 
 /** Get the gateway URL configured by the user. */
