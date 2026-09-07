@@ -1528,9 +1528,11 @@ class AivalaFraudPipeline:
                 except Exception:
                     continue
 
-            # Mandatory Claimant Face Requirement
+            # Vehicle-only evidence is valid when no human face is present. A
+            # claimant may record only the damaged vehicle, so liveness checks
+            # apply only when a face is actually detected.
             if not detected_face_crops:
-                return False, "Layer 4 Failed: Mandatory claimant face not detected in evidence video"
+                return True, "Layer 4 Passed: No human face present; liveness check not applicable"
 
             # Step 2: Face detected -> Pass detected face crops to F3-Net (FAD + LFS frequency analysis) & skin texture check
             face_laplacian_variances: list[float] = []

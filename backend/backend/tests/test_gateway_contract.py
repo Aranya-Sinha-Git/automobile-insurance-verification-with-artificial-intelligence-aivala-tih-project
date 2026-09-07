@@ -15,9 +15,16 @@ os.environ.setdefault("AIVALA_SECURITY_DB", str(Path(__file__).parent / "test-se
 
 from fraud_pipeline import AivalaFraudPipeline
 from legacy_evidence import canonical_json, generate_audit_receipt
-from main import _safe_inference_payload
+from main import CLAIM_HISTORY_LEDGER, _safe_inference_payload, _track
 from main import app
 from auth import verify_bearer
+
+
+def test_serpapi_key_is_not_hard_coded() -> None:
+    """Reverse-search credentials must come from the environment, never source."""
+    source = (HERE / "fraud_pipeline.py").read_text(encoding="utf-8")
+    assert 'serpapi_key: str = "' not in source
+    assert 'os.getenv("SERPAPI_KEY", "' not in source
 
 
 def test_inference_payload_requires_a_detection_list() -> None:
@@ -26,6 +33,12 @@ def test_inference_payload_requires_a_detection_list() -> None:
     with pytest.raises(ValueError):
         _safe_inference_payload({"detections": [{"bbox": [1, 2]}]})
     assert _safe_inference_payload({"detections": []}) == {"detections": []}
+
+
+def test_transaction_tracking_has_a_safe_in_memory_fallback() -> None:
+    request_id = f"request-{uuid.uuid4()}"
+    _track(request_id, "claim-test", "owner-test", "UPLOADING")
+    assert CLAIM_HISTORY_LEDGER[request_id]["state"] == "UPLOADING"
 
 
 def test_local_reverse_search_is_truthful_skip() -> None:

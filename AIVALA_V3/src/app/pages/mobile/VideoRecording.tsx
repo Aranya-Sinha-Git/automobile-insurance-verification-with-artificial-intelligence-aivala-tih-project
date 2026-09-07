@@ -15,6 +15,7 @@ import {
   Video,
   Square,
   Loader2,
+  RotateCcw,
 } from "lucide-react";
 
 import { Progress } from "@/app/components/ui/progress";
@@ -192,6 +193,20 @@ export default function VideoRecording() {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
       mediaRecorderRef.current.stop();
     }
+  };
+
+  const handleRetake = async () => {
+    if (videoPreviewUrl) {
+      URL.revokeObjectURL(videoPreviewUrl);
+    }
+    setVideoPreviewUrl(null);
+    setSelectedVideoFile(null);
+    setCapturedImage(null);
+    setRecorded(false);
+    setRecordingTime(0);
+    delete (window as any).currentClaimVideoFile;
+    delete (window as any).currentClaimThumbnail;
+    await startCameraStream();
   };
 
   // Extract thumbnail image from recorded video URL
@@ -408,9 +423,18 @@ export default function VideoRecording() {
 
           {/* AFTER RECORDING COMPLETE */}
           {!recording && recorded && (
-            <div className="flex justify-center w-full">
+            <div className="flex gap-3 justify-center w-full">
               <Button
-                className="w-full max-w-sm bg-green-600 hover:bg-green-700 text-white font-semibold h-14"
+                variant="outline"
+                className="flex-1 max-w-[10rem] border-white/30 bg-transparent text-white hover:bg-white/10"
+                onClick={handleRetake}
+                disabled={isSavingEvidence}
+              >
+                <RotateCcw className="mr-2 h-4 w-4" />
+                Retake
+              </Button>
+              <Button
+                className="flex-1 max-w-sm bg-green-600 hover:bg-green-700 text-white font-semibold h-14"
                 onClick={handleContinue}
                 disabled={isSavingEvidence}
               >
