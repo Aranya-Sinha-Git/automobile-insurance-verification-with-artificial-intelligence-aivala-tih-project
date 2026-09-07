@@ -41,6 +41,7 @@ from fraud_pipeline import (
     AivalaFraudPipeline,
     _connect,
     fingerprint_video,
+    get_all_historical_fingerprints,
     get_all_historical_phashes,
     store_fingerprint,
 )
@@ -345,8 +346,11 @@ async def verify_claim(
         logger.info(f"Executing 5-layer audit on target file {audit_target_path} for claim {current_claim_id}")
 
         # Run CPU-heavy 5-layer audit in worker threadpool
+        historical_fingerprints = await run_in_threadpool(get_all_historical_fingerprints)
+        # A lost-response retry must not flag the claim's own persisted evidence.
+        historical_fingerprints = [item for item in historical_fingerprints if item.get("claim_id") != current_claim_id]
         audit_result = await run_in_threadpool(
-            fraud_pipeline.run_5_layer_audit, audit_target_path, historical_phash_db, damage_location or None
+            fraud_pipeline.run_5_layer_audit, audit_target_path, historical_fingerprints, damage_location or None
         )
         _track(request_id, current_claim_id, owner_id, "FORENSICS_COMPLETE")
 
@@ -373,8 +377,6 @@ async def verify_claim(
             )
 
         new_phash = audit_result.get("phash", "")
-        if new_phash and new_phash not in historical_phash_db:
-            historical_phash_db.append(new_phash)
 
         context = {
             "claim_id": current_claim_id,
