@@ -1,0 +1,87 @@
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Python cache & virtual environments
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+ENV/
+.tools/
+
+# Build outputs & artifacts
+dist/
+**/dist/
+build/
+**/build/
+*.apk
+*.aar
+*.keystore
+
+# Android Gradle build files
+.gradle/
+**/.kotlin/
+**/android/.gradle/
+**/android/app/build/
+**/android/build/
+**/android/capacitor-cordova-android-plugins/build/
+**/android/captures/
+**/android/.navigation/
+
+# Environment files & Secrets
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# OS generated files
+.DS_Store
+**/.DS_Store
+Thumbs.db
+
+# IDE & Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Local Databases & Large Binaries
+*.sqlite3
+*.db
+*.onnx
+*.pt
+*.safetensors
+*.bin
+models/
+*.sqlite3.*
+
+# Deployable local model assets. The Qwen base remains download-only because it
+# is several GB; the fine-tuned adapter and YOLO weights are explicit assets.
+!final_best.pt
+!models/
+models/*
+!models/qwen3-vl-4b-car-damage-lora/
+!models/qwen3-vl-4b-car-damage-lora/*
+
+# Demo videos & test data directories
+demo/
+test_videos/
+data/
+**/data/
+mrisa-master/
+**/mrisa-master/
+*.mp4
+*.MOV
+*.mov
+*.avi
+*.webm
+*.mkv
+*.flv
+*.wmv
+*.m4v
+*.gif

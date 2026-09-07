@@ -1,0 +1,3 @@
+# Optional face detector. If unavailable, the pipeline intentionally uses its
+# OpenCV YuNet/ONNX/Haar fallback and reports that reduced mode in preflight.
+facenet-pytorch==2.6.0
