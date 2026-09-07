@@ -6,6 +6,7 @@
  * detection results.
  */
 import { toast } from "sonner";
+import { Capacitor } from "@capacitor/core";
 import { offlineStorage } from "./offlineStorage";
 import {
   estimateRepairCost,
@@ -123,6 +124,13 @@ export const DEFAULT_GATEWAY_URL = String(
 /** Get the gateway URL configured by the user. */
 export function getHFSpaceURL(): string {
   const customUrl = localStorage.getItem("hf_space_url");
+  const isStaleLocalUrl = Boolean(
+    customUrl && /^(https?:\/\/)?(localhost|127\.0\.0\.1)(:\d+)?\/?$/i.test(customUrl.trim()),
+  );
+  if (Capacitor.isNativePlatform() && isStaleLocalUrl) {
+    localStorage.setItem("hf_space_url", DEFAULT_GATEWAY_URL);
+    return DEFAULT_GATEWAY_URL;
+  }
   if (customUrl && customUrl.trim().length > 0) {
     return customUrl.trim().replace(/\/+$/, "");
   }
