@@ -64,17 +64,29 @@ function severityToScore(severity = "none"): number {
 }
 
 function normalizePipeline(raw: any): FiveStageSecurityDetails {
+  const stage = (number: number, name: string, value: any): FiveStageSecurityDetails["stage1_exif"] => ({
+    stage: Number(value?.stage) || number,
+    name: String(value?.name || `Layer ${number}: ${name}`),
+    shortName: String(value?.shortName || name),
+    status: ["PASSED", "FAILED", "WARNING", "SKIPPED"].includes(value?.status) ? value.status : "SKIPPED",
+    details: String(value?.details || "No result is available for this check."),
+    metricLabel: value?.metricLabel,
+    metricValue: value?.metricValue,
+  });
+  // Legacy records are mapped by meaning.  A legacy receipt cannot prove that
+  // B's reverse search ran, so it remains unavailable rather than "passed".
   return {
     overallStatus: raw?.overallStatus || "FAILED",
+    schemaVersion: Number(raw?.schema_version || raw?.schemaVersion || 1),
     timestamp:
       typeof raw?.timestamp === "number"
         ? new Date(raw.timestamp * 1000).toISOString()
         : raw?.timestamp || new Date().toISOString(),
-    stage1_exif: raw?.stage1_exif,
-    stage2_phash: raw?.stage2_phash,
-    stage3_ela: raw?.stage3_ela || raw?.stage3_duplicate,
-    stage4_deepfake: raw?.stage4_deepfake || raw?.stage4_ela,
-    stage5_reverse_search: raw?.stage5_reverse_search || raw?.stage5_vision_ledger,
+    stage1_exif: stage(1, "Metadata and container integrity", raw?.stage1_exif),
+    stage2_phash: stage(2, "Duplicate and motion fingerprint", raw?.stage2_phash),
+    stage3_ela: stage(3, "Visual tampering", raw?.stage3_ela),
+    stage4_deepfake: stage(4, "Face and liveness", raw?.stage4_deepfake),
+    stage5_reverse_search: stage(5, "Public-web reverse search", raw?.stage5_reverse_search),
   };
 }
 
@@ -159,15 +171,6 @@ export async function verifyClaimWithSecurityBackend(
       if (parsed && (parsed.status === "REJECTED_FRAUD" || parsed.status === "FRAUD_DETECTED")) {
         data = parsed;
       } else {
-        let detail = body;
-        if (parsed) {
-          detail = typeof parsed.detail === "string"
-            ? parsed.detail
-            : Array.isArray(parsed.detail)
-              ? parsed.detail.map((item: any) => item?.msg || String(item)).join("; ")
-              : parsed.reason || body;
-        }
-
         if (response.status === 400 || response.status === 422) {
           throw new SecurityGatewayError(
             "Verification Failed: Evidence video did not pass security verification guidelines. Please record a new video.",
@@ -178,9 +181,11 @@ export async function verifyClaimWithSecurityBackend(
         }
 
         throw new SecurityGatewayError(
-          `Security gateway returned HTTP ${response.status}: ${detail.slice(0, 300)}`,
+          response.status === 401 || response.status === 403
+            ? "Authentication is required to verify this claim."
+            : "Damage analysis is temporarily unavailable. Your evidence will be retained for retry.",
           response.status,
-          true,
+          response.status !== 401 && response.status !== 403,
           "infrastructure",
         );
       }
@@ -268,7 +273,7 @@ export async function verifyClaimWithSecurityBackend(
     };
   });
 
-  const isRejected = detections.length === 0 || costBreakdown.totalCost === 0;
+  const isRejected = data.status === "NO_DAMAGE";
   const authenticityFlagged = pipeline.overallStatus === "FLAGGED" || screenRecordingCheck.flagged;
   const receipt = String(data.cryptographic_audit?.receipt || "");
   const result: HFAnalysisResult & { cryptographicLedgerReceipt?: string } = {
@@ -293,6 +298,7 @@ export async function verifyClaimWithSecurityBackend(
   };
 
   persistResult(claimId, result, authenticityFlagged);
+  // Only terminal, successfully persisted responses may remove recoverable evidence.
   await offlineStorage.completeUpload(claimId);
   onStatus?.(authenticityFlagged ? "Analysis complete — manual review required" : "Evidence verification complete");
   toast.success(authenticityFlagged ? "Analysis complete; claim flagged for review" : "Evidence verification complete");

@@ -81,9 +81,9 @@ export default function FiveStageSecurityCard({
     ? [
         securityDetails.stage1_exif,
         securityDetails.stage2_phash,
-        securityDetails.stage3_duplicate,
-        securityDetails.stage4_ela,
-        securityDetails.stage5_vision_ledger,
+        securityDetails.stage3_ela,
+        securityDetails.stage4_deepfake,
+        securityDetails.stage5_reverse_search,
       ]
     : defaultStages;
 

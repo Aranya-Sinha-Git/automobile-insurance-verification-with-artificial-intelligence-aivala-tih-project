@@ -61,8 +61,8 @@ AIVALA is an automated motor insurance claims processing engine designed to cut 
    - Analyzes JPEG compression differential ratios and TruFor camera noise residuals (Noiseprint++) to detect visual tampering and splicing.
 4. **Layer 4: Deepfake & Claimant Face Liveness Check**
    - Evaluates facial skin texture variance and F3-Net frequency domain anomalies (FAD + LFS) to block AI face swaps and deepfakes.
-5. **Layer 5: Reverse Search Hook & Web Image Audit (SerpApi)**
-   - Queries Google Lens API (SerpApi) for stolen online stock media using location tags.
+5. **Layer 5: Local-only Namesake Audit**
+   - This deployment does not export evidence frames to a public reverse-image-search provider. The stage is reported as unavailable (`SKIPPED`), never as a clean web-search result.
 
 ---
 
@@ -75,7 +75,7 @@ python setup_local_ai.py
 
 `setup_local_ai.py` creates `.venv`, installs the pinned CUDA/runtime dependencies from `requirements.lock`, verifies `final_best.pt` and the Qwen adapter, downloads the Qwen base snapshot when needed, prepares the managed ngrok binary and optionally FFmpeg/FFprobe, and runs preflight checks. Use `--skip-qwen-download`, `--skip-ffmpeg`, or `--skip-ngrok` when those assets are supplied by another deployment step. Missing FFmpeg/FFprobe produces a warning and enables the OpenCV metadata fallback; set `AIVALA_REQUIRE_FFMPEG=1` to make them blocking.
 
-The Qwen adapter is loaded from `models/qwen3-vl-4b-car-damage-lora` by default and the base model is prepared at `models/qwen3-vl-4b-instruct`. Override them with `QWEN_ADAPTER_PATH` or `QWEN_BASE_MODEL_PATH`. Set `NGROK_DOMAIN` in `.env.local` to the persistent dev domain assigned to the account; the launcher validates both that domain and the configured authtoken before reporting success. Set `SERPAPI_KEY` or `SERPAPI_KEYS` to enable SerpApi checks, and set `FREEIMAGE_HOST_API_KEY` when enabling online reverse-search uploads. Set `AIVALA_AUDIT_SECRET` to enable HMAC audit receipts. `DEV_TESTING_MODE` defaults to `false`; set it to `true` only for local media-transfer testing.
+The Qwen adapter is loaded from `models/qwen3-vl-4b-car-damage-lora` by default and the base model is prepared at `models/qwen3-vl-4b-instruct`. Override them with `QWEN_ADAPTER_PATH` or `QWEN_BASE_MODEL_PATH`. Set `NGROK_DOMAIN` in `.env.local` to the persistent dev domain assigned to the account; the launcher validates both that domain and the configured authtoken before reporting success. Set `AIVALA_AUDIT_SECRET` to enable HMAC audit receipts. `DEV_TESTING_MODE` defaults to `false`; set it to `true` only for local media-transfer testing.
 
 ### 2. Start Local AI Infrastructure & Gateway
 ```bash

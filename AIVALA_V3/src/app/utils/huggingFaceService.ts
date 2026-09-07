@@ -61,11 +61,12 @@ export interface FiveStageSecurityItem {
 export interface FiveStageSecurityDetails {
   overallStatus: "PASSED" | "FAILED" | "FLAGGED";
   timestamp: string;
-  stage1_exif?: FiveStageSecurityItem;
-  stage2_phash?: FiveStageSecurityItem;
-  stage3_ela?: FiveStageSecurityItem;
-  stage4_deepfake?: FiveStageSecurityItem;
-  stage5_reverse_search?: FiveStageSecurityItem;
+  schemaVersion?: number;
+  stage1_exif: FiveStageSecurityItem;
+  stage2_phash: FiveStageSecurityItem;
+  stage3_ela: FiveStageSecurityItem;
+  stage4_deepfake: FiveStageSecurityItem;
+  stage5_reverse_search: FiveStageSecurityItem;
   /** Backward compatibility aliases */
   stage3_duplicate?: FiveStageSecurityItem;
   stage4_ela?: FiveStageSecurityItem;
@@ -422,10 +423,10 @@ export async function analyzeClaimVideo(
       },
       stage5_reverse_search: {
         stage: 5,
-        name: "Layer 5: Web Reverse Search (Namesake Audit)",
+        name: "Layer 5: Public-web Reverse Search",
         shortName: "Web Reverse Search",
-        status: "PASSED",
-        details: "Namesake audit completed.",
+        status: "SKIPPED",
+        details: "Direct inference never substitutes for the gateway reverse-search audit.",
       },
     },
   };

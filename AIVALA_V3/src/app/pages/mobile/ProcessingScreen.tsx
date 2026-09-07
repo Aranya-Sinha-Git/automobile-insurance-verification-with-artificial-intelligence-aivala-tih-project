@@ -35,8 +35,8 @@ export default function ProcessingScreen() {
     { key: "metadata_check", name: "Layer 2: Evidence Hashing (pHash)" },
     { key: "phash_check", name: "Layer 3: Visual Tampering (ELA)" },
     { key: "ela_check", name: "Layer 4: Deepfake & Face Liveness" },
-    { key: "inference_ledger", name: "Layer 5: Web Reverse Search (Namesake)" },
-    { key: "done", name: "Verification Complete" },
+    { key: "inference_ledger", name: "Layer 5: Public-web reverse search" },
+    { key: "done", name: "YOLO/Qwen damage analysis complete" },
   ];
 
   const stepIndex = steps.findIndex((s) => s.key === state);

@@ -14,11 +14,14 @@ import os
 import subprocess
 import tempfile
 import time
-import traceback
+import hashlib
+import json
+import uuid
 from pathlib import Path
-from typing import List
+from typing import Any, List
 
-from fastapi import FastAPI, File, Form, UploadFile
+import httpx
+from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
@@ -35,22 +38,29 @@ except ImportError:
 
 from fraud_pipeline import (
     AivalaFraudPipeline,
+    _connect,
     fingerprint_video,
     get_all_historical_phashes,
     store_fingerprint,
 )
+from legacy_evidence import generate_audit_receipt
+from auth import require_operator
 
 logger = logging.getLogger("AivalaFraudAPI")
 logging.basicConfig(level=logging.INFO)
 
 app = FastAPI(title="AIVALA Standalone 5-Layer Fraud Detection Server")
 
+_default_origins = "capacitor://localhost,http://localhost,https://localhost,http://localhost:3000,http://localhost:5173"
+_allowed_origins = [origin.strip() for origin in os.getenv("AIVALA_ALLOWED_ORIGINS", _default_origins).split(",") if origin.strip()]
+if "*" in _allowed_origins:
+    raise RuntimeError("AIVALA_ALLOWED_ORIGINS cannot contain '*' when credentialed browser access is enabled")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=_allowed_origins,
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "ngrok-skip-browser-warning"],
 )
 
 # Initialize pipeline and load historical pHash DB from persistent SQLite database
@@ -70,6 +80,36 @@ def startup_event():
         logger.info(f"Startup: Loaded {len(historical_phash_db)} pHash records from SQLite DB")
     except Exception as exc:
         logger.warning(f"Startup DB load error: {exc}")
+
+
+def _safe_inference_payload(payload: Any) -> dict[str, Any]:
+    if not isinstance(payload, dict) or not isinstance(payload.get("detections"), list):
+        raise ValueError("missing detections")
+    for detection in payload["detections"]:
+        if not isinstance(detection, dict) or not isinstance(detection.get("bbox"), list) or len(detection["bbox"]) != 4:
+            raise ValueError("malformed detection")
+    return payload
+
+
+async def _forward_to_inference(path: str, filename: str, content_type: str | None, context: dict[str, str]) -> dict[str, Any]:
+    """Call the private YOLO/Qwen service and reject malformed upstream data."""
+    timeout = httpx.Timeout(connect=15.0, read=240.0, write=60.0, pool=15.0)
+    url = os.getenv("AI_INFERENCE_SERVER_URL", "http://127.0.0.1:8001/analyze-video").strip()
+    try:
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
+            with open(path, "rb") as evidence:
+                response = await client.post(url, files={"file": (filename, evidence, content_type or "video/mp4")}, data=context)
+        if response.status_code >= 500:
+            raise RuntimeError("upstream unavailable")
+        if response.status_code >= 400:
+            raise ValueError("upstream rejected evidence")
+        return _safe_inference_payload(response.json())
+    except httpx.TimeoutException as exc:
+        raise TimeoutError("inference timeout") from exc
+    except httpx.RequestError as exc:
+        raise RuntimeError("inference connection failed") from exc
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise RuntimeError("invalid inference response") from exc
 
 
 def _convert_webm_to_mp4(src: str, dst: str) -> bool:
@@ -148,6 +188,15 @@ def health():
     }
 
 
+@app.get("/tracking-logs/")
+def get_all_logs(authorization: str | None = Header(None), limit: int = 50, offset: int = 0):
+    """Operator-only, process-local transaction history without evidence data."""
+    require_operator(authorization)
+    bounded_limit = min(max(limit, 1), 100)
+    records = list(CLAIM_HISTORY_LEDGER.values())[max(offset, 0):max(offset, 0) + bounded_limit]
+    return {"total_records": len(CLAIM_HISTORY_LEDGER), "records": records, "offset": max(offset, 0), "limit": bounded_limit}
+
+
 @app.post("/verify-claim")
 @app.post("/verify-claim/")
 @app.post("/api/v1/fraud-check")
@@ -171,21 +220,24 @@ async def verify_claim(
     temp_path: str | None = None
     converted_mp4_path: str | None = None
     current_claim_id = "UNKNOWN"
+    request_id = str(uuid.uuid4())
 
     try:
-        if not upload_file:
+        if not upload_file or (file is not None and video is not None):
             logger.error("Neither 'file' nor 'video' field was sent in multipart form data")
             return JSONResponse(
                 status_code=400,
                 content={
                     "status": "REJECTED_FRAUD",
-                    "failed_layer": 1,
-                    "reason": "No evidence video file uploaded (expected form-data field 'file' or 'video')",
+                    "request_id": request_id,
+                    "error_code": "EXACTLY_ONE_FILE_REQUIRED",
+                    "reason": "Send exactly one evidence video using the 'file' or 'video' form field.",
                 },
             )
 
-        cid_clean = str(claim_id or "").strip()
+        cid_clean = re.sub(r"[^A-Za-z0-9_-]", "", str(claim_id or ""))[:80]
         current_claim_id = cid_clean if cid_clean else f"CLM-LOCAL-{int(time.time() * 1000)}"
+        CLAIM_HISTORY_LEDGER[request_id] = {"request_id": request_id, "claim_id": current_claim_id, "state": "UPLOADING", "received_at": time.time()}
         filename = upload_file.filename or "evidence.mp4"
         suffix = Path(filename).suffix.lower() or ".mp4"
 
@@ -205,21 +257,27 @@ async def verify_claim(
             )
 
         # Convert .webm to .mp4 using PyAV / imageio-ffmpeg in threadpool to prevent blocking OpenCV
+        original_sha256 = hashlib.sha256(Path(temp_path).read_bytes()).hexdigest()
         audit_target_path = temp_path
+        analysis_filename = filename
+        analysis_content_type = upload_file.content_type or "video/mp4"
         if temp_path.lower().endswith(".webm") or suffix == ".webm":
             mp4_target = temp_path.rsplit(".", 1)[0] + "_converted.mp4"
             ok = await run_in_threadpool(_convert_webm_to_mp4, temp_path, mp4_target)
             if ok:
                 converted_mp4_path = mp4_target
                 audit_target_path = converted_mp4_path
+                analysis_filename = f"{Path(filename).stem}.mp4"
+                analysis_content_type = "video/mp4"
                 logger.info(f"Successfully converted WebM to MP4: {audit_target_path}")
 
         logger.info(f"Executing 5-layer audit on target file {audit_target_path} for claim {current_claim_id}")
 
         # Run CPU-heavy 5-layer audit in worker threadpool
         audit_result = await run_in_threadpool(
-            fraud_pipeline.run_5_layer_audit, audit_target_path, historical_phash_db
+            fraud_pipeline.run_5_layer_audit, audit_target_path, historical_phash_db, damage_location or None
         )
+        CLAIM_HISTORY_LEDGER[request_id]["state"] = "FORENSICS_COMPLETE"
 
         if not audit_result.get("passed"):
             failed_layer = audit_result.get("failed_layer", 1)
@@ -234,17 +292,11 @@ async def verify_claim(
                 status_code=400,
                 content={
                     "status": "REJECTED_FRAUD",
+                    "request_id": request_id,
                     "failed_layer": failed_layer,
+                    "error_code": audit_result.get("error_code", "FORENSIC_REJECTED"),
                     "reason": generic_user_reason,
-                    "security_pipeline": {
-                        "overallStatus": "FAILED",
-                        "timestamp": time.time(),
-                        "stage1_exif": {"stage": 1, "status": "FAILED" if failed_layer == 1 else "PASSED", "details": generic_user_reason if failed_layer == 1 else "Passed"},
-                        "stage2_phash": {"stage": 2, "status": "FAILED" if failed_layer == 2 else "PASSED", "details": generic_user_reason if failed_layer == 2 else "Passed"},
-                        "stage3_ela": {"stage": 3, "status": "FAILED" if failed_layer == 3 else "PASSED", "details": generic_user_reason if failed_layer == 3 else "Passed"},
-                        "stage4_deepfake": {"stage": 4, "status": "FAILED" if failed_layer == 4 else "PASSED", "details": generic_user_reason if failed_layer == 4 else "Passed"},
-                        "stage5_reverse_search": {"stage": 5, "status": "FAILED" if failed_layer == 5 else "PASSED", "details": generic_user_reason if failed_layer == 5 else "Passed"},
-                    },
+                    "security_pipeline": audit_result.get("security_pipeline", {}),
                 },
             )
 
@@ -252,68 +304,72 @@ async def verify_claim(
         if new_phash and new_phash not in historical_phash_db:
             historical_phash_db.append(new_phash)
 
-        # Store fingerprint into persistent SQLite database
+        context = {
+            "claim_id": current_claim_id,
+            "incident_datetime": incident_datetime or "",
+            "damage_location": damage_location or "unspecified",
+            "damaged_parts_count": damaged_parts_count or "1",
+            "damage_extent": damage_extent or "localized",
+            "reported_damage_type": reported_damage_type or "unspecified",
+            "incident_description": incident_description or "",
+        }
+        try:
+            ai_result = await _forward_to_inference(audit_target_path, analysis_filename, analysis_content_type, context)
+        except TimeoutError:
+            return JSONResponse(status_code=504, content={"status": "INFRA_FAILURE", "claim_id": current_claim_id, "request_id": request_id, "error_code": "INFERENCE_TIMEOUT", "reason": "Damage analysis timed out. Your evidence can be retried.", "security_pipeline": audit_result.get("security_pipeline", {})})
+        except (ValueError, RuntimeError):
+            return JSONResponse(status_code=503, content={"status": "INFRA_FAILURE", "claim_id": current_claim_id, "request_id": request_id, "error_code": "INFERENCE_UNAVAILABLE", "reason": "Damage analysis is temporarily unavailable. Your evidence can be retried.", "security_pipeline": audit_result.get("security_pipeline", {})})
+        CLAIM_HISTORY_LEDGER[request_id]["state"] = "INFERENCE_COMPLETE"
+
+        # Final persistence is a required terminal step: never report approval if it fails.
         try:
             fp_dict = fingerprint_video(audit_target_path)
-            store_fingerprint(current_claim_id, fp_dict)
+            receipt_payload = {
+                "schema_version": 2,
+                "claim_id": current_claim_id,
+                "original_sha256": original_sha256,
+                "analysis_sha256": hashlib.sha256(Path(audit_target_path).read_bytes()).hexdigest(),
+                "damage_context": context,
+                "forensic_outcomes": audit_result.get("security_pipeline", {}),
+                "inference_sha256": hashlib.sha256(json.dumps(ai_result, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest(),
+                "decision": "NO_DAMAGE" if not ai_result.get("detections") else "APPROVED_AUTHENTIC",
+            }
+            with _connect() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                store_fingerprint(current_claim_id, fp_dict, connection=connection)
+                receipt = generate_audit_receipt(current_claim_id, receipt_payload, connection=connection)
+                connection.commit()
             logger.info(f"Successfully stored fingerprint for claim {current_claim_id} in SQLite database")
         except Exception as fp_err:
-            logger.warning(f"Could not save fingerprint to SQLite for claim {current_claim_id}: {fp_err}")
+            logger.exception("Could not save fingerprint for claim %s", current_claim_id)
+            return JSONResponse(status_code=503, content={"status": "INFRA_FAILURE", "claim_id": current_claim_id, "request_id": request_id, "error_code": "PERSISTENCE_FAILURE", "reason": "Verification could not be finalized. Your evidence can be retried.", "security_pipeline": audit_result.get("security_pipeline", {})})
 
-        logger.info(f"Claim {current_claim_id} approved: All 5 forensic layers passed")
+        outcome = "NO_DAMAGE" if not ai_result.get("detections") else "APPROVED_AUTHENTIC"
+        CLAIM_HISTORY_LEDGER[request_id]["state"] = outcome
+        logger.info("Claim %s completed with %s", current_claim_id, outcome)
         return {
-            "status": "APPROVED_AUTHENTIC",
+            "status": outcome,
             "claim_id": current_claim_id,
+            "request_id": request_id,
             "phash": new_phash,
-            "message": "All 5 fraud layers verified",
-            "ai_result": {
-                "summary": "Vehicle damage confirmed: Scratch & Body Dent verified across video keyframes",
-                "detections": [
-                    {
-                        "class_id": 0,
-                        "label": "scratch",
-                        "confidence": 0.94,
-                        "bbox": [150, 100, 480, 360],
-                        "severity": "semi_moderate",
-                        "severity_note": "Surface paint scuff and panel scratch detected",
-                    },
-                    {
-                        "class_id": 1,
-                        "label": "dent",
-                        "confidence": 0.89,
-                        "bbox": [220, 180, 540, 420],
-                        "severity": "moderate",
-                        "severity_note": "Vehicle body panel dent verified",
-                    },
-                ],
-                "model_reasoning": [
-                    "5-layer forensic security verification passed cleanly.",
-                    "Computer vision model identified vehicle damage regions (scratch, dent).",
-                    "Damage severity evaluated and verified against claim context.",
-                ],
-            },
-            "security_pipeline": {
-                "overallStatus": "PASSED",
-                "timestamp": time.time(),
-                "stage1_exif": {"stage": 1, "status": "PASSED", "details": "Layer 1 Passed"},
-                "stage2_phash": {"stage": 2, "status": "PASSED", "details": "Layer 2 Passed"},
-                "stage3_ela": {"stage": 3, "status": "PASSED", "details": "Layer 3 Passed"},
-                "stage4_deepfake": {"stage": 4, "status": "PASSED", "details": "Layer 4 Passed"},
-                "stage5_reverse_search": {"stage": 5, "status": "PASSED", "details": "Layer 5 Passed"},
-            },
+            "message": "Forensic verification and damage analysis completed",
+            "ai_result": ai_result,
+            "security_pipeline": audit_result.get("security_pipeline", {}),
+            "original_evidence": {"sha256": original_sha256, "filename": filename},
+            "analysis_evidence": {"sha256": hashlib.sha256(Path(audit_target_path).read_bytes()).hexdigest(), "filename": analysis_filename, "content_type": analysis_content_type, "converted": bool(converted_mp4_path)},
+            "cryptographic_audit": receipt,
         }
 
-    except Exception as exc:
-        trace_str = traceback.format_exc()
-        logger.error(f"Unhandled exception during verify_claim for claim {current_claim_id}:\n{trace_str}")
-        print(f"[VERIFY_CLAIM ERROR]\n{trace_str}", flush=True)
+    except Exception:
+        logger.exception("Unhandled verification error for claim=%s request=%s", current_claim_id, request_id)
         return JSONResponse(
-            status_code=400,
+            status_code=500,
             content={
-                "status": "REJECTED_FRAUD",
-                "failed_layer": 1,
-                "reason": f"Internal processing error: {str(exc)}",
-                "traceback": trace_str.splitlines()[-5:],
+                "status": "INFRA_FAILURE",
+                "claim_id": current_claim_id,
+                "request_id": request_id,
+                "error_code": "PROCESSING_FAILURE",
+                "reason": "Verification could not be completed. Your evidence can be retried.",
             },
         )
     finally:

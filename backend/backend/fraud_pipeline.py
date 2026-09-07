@@ -29,6 +29,7 @@ import imagehash
 import numpy as np
 import requests
 from PIL import Image, ImageChops
+from urllib.parse import urlparse
 
 logger = logging.getLogger("AivalaFraudPipeline")
 logging.basicConfig(level=logging.INFO)
@@ -36,7 +37,7 @@ logging.getLogger("exifread").setLevel(logging.ERROR)
 
 # Set to True during local testing with WhatsApp/AirDrop media.
 # Set to False in production for strict EXIF enforcement.
-DEV_TESTING_MODE: bool = os.getenv("DEV_TESTING_MODE", "true").lower() in (
+DEV_TESTING_MODE: bool = os.getenv("DEV_TESTING_MODE", "false").lower() in (
     "true",
     "1",
     "yes",
@@ -406,13 +407,8 @@ class AivalaFraudPipeline:
     def __init__(
         self,
         phash_threshold: int = 12,
-        serpapi_key: str = "ba0eb38298373753e46f5340a0e95249f8fd250227a7f577883bfed52130620e",
     ):
         self.phash_threshold = phash_threshold
-        # Support single key or comma-separated SERPAPI_KEYS / list of fallback keys
-        raw_serp = os.getenv("SERPAPI_KEYS") or serpapi_key or os.getenv("SERPAPI_KEY", "ba0eb38298373753e46f5340a0e95249f8fd250227a7f577883bfed52130620e")
-        self.serpapi_keys = [k.strip() for k in raw_serp.split(",") if k.strip()]
-        self.serpapi_key = self.serpapi_keys[0] if self.serpapi_keys else ""
         self._yunet_detector = None
         self.face_cascade = None
         self.profile_cascade = None
@@ -436,9 +432,7 @@ class AivalaFraudPipeline:
             return True
         try:
             if isinstance(media_input, (str, Path)):
-                path_str = str(media_input).lower()
-                if any(k in path_str for k in ["whatsapp", "vid-wa", "img-wa", "wa0", "wa_", "airdrop", "telegram"]):
-                    return True
+                # A filename is user-controlled and is never provenance.
                 if Path(media_input).exists():
                     with open(media_input, "rb") as f:
                         sample = f.read(200000).lower()
@@ -1234,13 +1228,19 @@ class AivalaFraudPipeline:
         media_input: str | Path | bytes | Image.Image | np.ndarray,
         declared_location: str | None = None,
         video_meta: dict | None = None,
-    ) -> tuple[bool, str]:
-        """Layer 5: Web Reverse Search (Namesake Audit Check).
+    ) -> tuple[bool, dict[str, Any]]:
+        """Preserve B's local-only Layer 5 without claiming an external search.
 
-        Performs namesake audit pass without external SerpApi calls.
+        The B repository has no configured or implemented remote reverse-image
+        provider.  Treating that absence as a clean web-search result would be
+        misleading, so callers render this as unavailable rather than passed.
         """
-        logger.info("[AUDIT] Layer 5 Web Reverse Search namesake audit executed.")
-        return True, "Layer 5 Passed: Web Reverse Search verified clean (Namesake audit)"
+        logger.info("[AUDIT] Layer 5 local Namesake audit: no remote image-search provider configured.")
+        return True, {
+            "status": "SKIPPED",
+            "message": "Public-web reverse search is not configured in this deployment.",
+            "evidence": {"mode": "local_only", "external_provider_called": False},
+        }
 
     # Backward compatibility alias
     layer_3_reverse_search_hook = layer_5_reverse_search_hook
@@ -1614,6 +1614,18 @@ class AivalaFraudPipeline:
                 "message": reason_str,
             }
 
+    @staticmethod
+    def _stage(layer: int, name: str, status: str, details: str, evidence: Any = None) -> dict[str, Any]:
+        result: dict[str, Any] = {"stage": layer, "name": name, "shortName": name.replace("Layer ", ""), "status": status, "details": details}
+        if evidence is not None:
+            result["evidence"] = evidence
+        return result
+
+    @classmethod
+    def _pipeline_response(cls, stages: dict[str, dict[str, Any]], approved: bool, **extra: Any) -> dict[str, Any]:
+        pipeline = {"schema_version": 2, "overallStatus": "PASSED" if approved else "FAILED", "timestamp": datetime.now(timezone.utc).isoformat(), **stages}
+        return {"passed": approved, "status": "APPROVED_AUTHENTIC" if approved else "REJECTED_FRAUD", "security_pipeline": pipeline, **extra}
+
     def run_5_layer_audit(
         self,
         video_path: str,
@@ -1629,17 +1641,12 @@ class AivalaFraudPipeline:
         Layer 4: Deepfake & Mandatory Claimant Face Liveness Check
         Layer 5: Reverse Search Hook (Stolen Web Image Check via SerpApi)
         """
+        names = {"stage1_exif": "Metadata and container integrity", "stage2_phash": "Duplicate and motion fingerprint", "stage3_ela": "Visual tampering and screen replay", "stage4_deepfake": "Face and liveness assessment", "stage5_reverse_search": "Public-web reverse search"}
+        stages = {key: self._stage(i + 1, name, "SKIPPED", "Not executed because an earlier forensic layer did not complete.") for i, (key, name) in enumerate(names.items())}
         frames = self._extract_frames_from_video(video_path, n_frames=12)
         if not frames:
-            return {
-                "passed": False,
-                "failed_layer": 1,
-                "reason": "Video Frame Extraction Failed: No readable frames decoded from video",
-                "status": "FAILED",
-                "layer": "Layer 1",
-                "error_code": "FRAME_EXTRACTION_FAILED",
-                "message": "Video Frame Extraction Failed: No readable frames decoded from video",
-            }
+            stages["stage1_exif"] = self._stage(1, names["stage1_exif"], "FAILED", "Video Frame Extraction Failed: No readable frames decoded from video")
+            return self._pipeline_response(stages, False, failed_layer=1, reason=stages["stage1_exif"]["details"], error_code="FRAME_EXTRACTION_FAILED")
 
         is_whatsapp = self._is_whatsapp_media(video_path)
         meta = self._extract_video_meta_for_hashing(video_path)
@@ -1647,19 +1654,27 @@ class AivalaFraudPipeline:
         # ── LAYER 1: EXIF Metadata Integrity Check ────────────────────────
         passed1, diag1 = self.layer_1_exif_metadata_check(video_path)
         if not passed1:
-            return self._build_failure_response(1, diag1, default_code="EXIF_CONTAINER_REJECTED")
+            failure = self._build_failure_response(1, diag1, default_code="EXIF_CONTAINER_REJECTED")
+            stages["stage1_exif"] = self._stage(1, names["stage1_exif"], "FAILED", failure["reason"], failure.get("evidence"))
+            return self._pipeline_response(stages, False, **failure)
+        stages["stage1_exif"] = self._stage(1, names["stage1_exif"], "PASSED", str(diag1))
 
         # ── LAYER 2: Hashing, Scene Fingerprint & Static Video Detection ──────
         passed2_static, diag2_static = check_static_video_feed(frames, motion_threshold=1.0)
         if not passed2_static:
-            return self._build_failure_response(2, diag2_static, default_code="STATIC_VIDEO_REJECTED")
+            failure = self._build_failure_response(2, diag2_static, default_code="STATIC_VIDEO_REJECTED")
+            stages["stage2_phash"] = self._stage(2, names["stage2_phash"], "FAILED", failure["reason"], failure.get("evidence"))
+            return self._pipeline_response(stages, False, **failure)
 
         passed2, diag2_phash = self.layer_2_perceptual_hashing(
             video_path, historical_phash_db, sampled_frames=frames
         )
         if not passed2:
-            return self._build_failure_response(2, diag2_phash, default_code="DUPLICATE_CLAIM_REJECTED")
+            failure = self._build_failure_response(2, diag2_phash, default_code="DUPLICATE_CLAIM_REJECTED")
+            stages["stage2_phash"] = self._stage(2, names["stage2_phash"], "FAILED", failure["reason"], failure.get("evidence"))
+            return self._pipeline_response(stages, False, **failure)
         computed_phash = str(diag2_phash)
+        stages["stage2_phash"] = self._stage(2, names["stage2_phash"], "PASSED", "Motion and perceptual fingerprint checks passed.", {"phash": computed_phash})
 
         # ── LAYER 3: Visual Tampering & Anti-Spoofing ──────────────────────────
         # Check 1: Screen & Monitor Re-Recording Detector (2D FFT Moiré + Planar Optical Flow Parallax)
@@ -1671,18 +1686,26 @@ class AivalaFraudPipeline:
         block_detector = BlockHashTamperDetector()
         passed_block, diag_block = block_detector.analyze(frames)
         if not passed_block:
-            return self._build_failure_response(3, diag_block, default_code="LOCALIZED_TAMPERING_REJECTED")
+            failure = self._build_failure_response(3, diag_block, default_code="LOCALIZED_TAMPERING_REJECTED")
+            stages["stage3_ela"] = self._stage(3, names["stage3_ela"], "FAILED", failure["reason"], failure.get("evidence"))
+            return self._pipeline_response(stages, False, **failure)
 
         # Heavy Vision Model: TruFor Noiseprint++ & Multi-scale ELA
         for f_idx, frame in enumerate(frames):
             passed3, diag3 = self.layer_3_visual_tampering_ela(frame, quality=90, threshold=40.0, is_whatsapp=is_whatsapp)
             if not passed3:
-                return self._build_failure_response(3, f"Frame {f_idx}: {diag3}" if isinstance(diag3, str) else diag3, default_code="VISUAL_TAMPERING_REJECTED")
+                failure = self._build_failure_response(3, f"Frame {f_idx}: {diag3}" if isinstance(diag3, str) else diag3, default_code="VISUAL_TAMPERING_REJECTED")
+                stages["stage3_ela"] = self._stage(3, names["stage3_ela"], "FAILED", failure["reason"], failure.get("evidence"))
+                return self._pipeline_response(stages, False, **failure)
+        stages["stage3_ela"] = self._stage(3, names["stage3_ela"], "PASSED", "Visual tampering checks completed.")
 
         # ── LAYER 4: Deepfake & Mandatory Claimant Face Liveness Check ─────────
         passed4, diag4 = self.layer_4_deepfake_face_liveness(frames, laplacian_threshold=12.0)
         if not passed4:
-            return self._build_failure_response(4, diag4, default_code="CLAIMANT_FACE_REQUIRED")
+            failure = self._build_failure_response(4, diag4, default_code="CLAIMANT_FACE_REQUIRED")
+            stages["stage4_deepfake"] = self._stage(4, names["stage4_deepfake"], "FAILED", failure["reason"], failure.get("evidence"))
+            return self._pipeline_response(stages, False, **failure)
+        stages["stage4_deepfake"] = self._stage(4, names["stage4_deepfake"], "PASSED", str(diag4))
 
         # ── LAYER 5: Web Reverse Image Search & Geotag Verification ────────────
         passed5, diag5 = self.layer_5_reverse_search_hook(
@@ -1691,16 +1714,16 @@ class AivalaFraudPipeline:
             video_meta=meta,
         )
         if not passed5:
-            return self._build_failure_response(5, diag5, default_code="REVERSE_SEARCH_STOLEN_WEB_MEDIA")
+            failure = self._build_failure_response(5, diag5, default_code="REVERSE_SEARCH_STOLEN_WEB_MEDIA")
+            stages["stage5_reverse_search"] = self._stage(5, names["stage5_reverse_search"], "FAILED", failure["reason"], failure.get("evidence"))
+            return self._pipeline_response(stages, False, **failure)
+        if isinstance(diag5, dict):
+            stages["stage5_reverse_search"] = self._stage(5, names["stage5_reverse_search"], diag5.get("status", "PASSED"), str(diag5.get("message", "Reverse search completed.")), diag5.get("evidence"))
+        else:
+            stages["stage5_reverse_search"] = self._stage(5, names["stage5_reverse_search"], "PASSED", str(diag5))
 
         # All 5 layers passed!
-        return {
-            "passed": True,
-            "status": "APPROVED_AUTHENTIC",
-            "phash": computed_phash,
-            "reason": "Passed all 5 forensic layers",
-            "message": "Passed all 5 forensic layers",
-        }
+        return self._pipeline_response(stages, True, phash=computed_phash, reason="Passed all 5 forensic layers", message="Passed all 5 forensic layers")
 
 
 # SQLite Database Helper Functions for Fingerprint Storage
@@ -1895,7 +1918,7 @@ def fingerprint_video(video_path: str) -> dict[str, Any]:
     }
 
 
-def store_fingerprint(claim_id: str, fingerprint: dict[str, Any]) -> None:
+def store_fingerprint(claim_id: str, fingerprint: dict[str, Any], *, connection: sqlite3.Connection | None = None) -> None:
     """Store enhanced multi-strategy video fingerprint in SQLite database."""
     now           = datetime.now(timezone.utc).isoformat()
     phash_seq     = fingerprint.get("phash_seq") or fingerprint.get("frame_phashes", [])
@@ -1907,9 +1930,15 @@ def store_fingerprint(claim_id: str, fingerprint: dict[str, Any]) -> None:
     gps_lat       = fingerprint.get("gps_lat")
     gps_lon       = fingerprint.get("gps_lon")
 
-    with closing(_connect()) as connection:
-        connection.execute("DELETE FROM evidence_fingerprints WHERE claim_id = ?", (claim_id,))
-        connection.executemany(
+    owns_connection = connection is None
+    conn = connection or _connect()
+    try:
+        existing = conn.execute("SELECT file_sha256 FROM evidence_fingerprints WHERE claim_id = ? LIMIT 1", (claim_id,)).fetchone()
+        if existing and existing[0] != fingerprint["file_sha256"]:
+            raise ValueError("claim_id is already finalized with different evidence")
+        if existing:
+            return
+        conn.executemany(
             """INSERT INTO evidence_fingerprints
                (claim_id, file_sha256, frame_index, phash, dhash, ahash,
                 color_sig, motion_sig, capture_timestamp, gps_lat, gps_lon, created_at)
@@ -1932,4 +1961,8 @@ def store_fingerprint(claim_id: str, fingerprint: dict[str, Any]) -> None:
                 for idx in range(len(phash_seq))
             ],
         )
-        connection.commit()
+        if owns_connection:
+            conn.commit()
+    finally:
+        if owns_connection:
+            conn.close()
