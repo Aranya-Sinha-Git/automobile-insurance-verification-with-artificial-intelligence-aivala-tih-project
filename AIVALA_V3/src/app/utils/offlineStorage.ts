@@ -146,7 +146,7 @@ class OfflineStorageManager {
       const claims = await this.requestResult<OfflineClaim[]>(
         claimTx.objectStore(this.STORE_CLAIMS).getAll(),
       );
-      this.claimsCache = (claims || []).filter(
+      this.claimsCache = (claims || []).map((claim) => this.hydrateClaim(claim)).filter(
         (claim) => (claim.ownerId || "local-development") === this.ownerId(),
       );
 
@@ -191,6 +191,52 @@ class OfflineStorageManager {
     await this.dbPromise;
   }
 
+  private hydrateClaim(claim: OfflineClaim): OfflineClaim {
+    const persisted = claim as OfflineClaim & {
+      videoData?: ArrayBuffer | Uint8Array;
+    };
+    if (persisted.videoBlob || !persisted.videoData) return claim;
+
+    const bytes = persisted.videoData;
+    const buffer = bytes instanceof ArrayBuffer
+      ? bytes
+      : bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+    return {
+      ...claim,
+      videoBlob: new Blob([buffer], {
+        type: claim.videoMimeType || "video/webm",
+      }),
+    };
+  }
+
+  private blobToArrayBuffer(blob: Blob): Promise<ArrayBuffer> {
+    if (typeof blob.arrayBuffer === "function") return blob.arrayBuffer();
+
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as ArrayBuffer);
+      reader.onerror = () => reject(reader.error || new Error("Unable to read video evidence"));
+      reader.readAsArrayBuffer(blob);
+    });
+  }
+
+  private async putClaimRecord(
+    db: IDBDatabase,
+    claim: OfflineClaim,
+    videoData?: ArrayBuffer,
+  ): Promise<void> {
+    const persistedClaim = { ...claim } as OfflineClaim & {
+      videoData?: ArrayBuffer;
+    };
+    if (videoData) {
+      delete persistedClaim.videoBlob;
+      persistedClaim.videoData = videoData;
+    }
+    const transaction = db.transaction(this.STORE_CLAIMS, "readwrite");
+    transaction.objectStore(this.STORE_CLAIMS).put(persistedClaim);
+    await this.transactionComplete(transaction);
+  }
+
   async saveClaim(claim: OfflineClaim, queueForSync = true): Promise<boolean> {
     try {
       await this.ready();
@@ -222,9 +268,17 @@ class OfflineStorageManager {
 
       const db = await this.dbPromise;
       if (db) {
-        const transaction = db.transaction(this.STORE_CLAIMS, "readwrite");
-        transaction.objectStore(this.STORE_CLAIMS).put(normalized);
-        await this.transactionComplete(transaction);
+        try {
+          await this.putClaimRecord(db, normalized);
+        } catch (blobError) {
+          // Older Android WebViews can preview a Blob but fail to structured-clone
+          // it into IndexedDB. Retry with a plain ArrayBuffer, which those WebViews
+          // support consistently. The conversion is asynchronous and avoids a UI
+          // thread freeze while the recording is being saved.
+          if (!persistableVideo) throw blobError;
+          const videoData = await this.blobToArrayBuffer(persistableVideo);
+          await this.putClaimRecord(db, normalized, videoData);
+        }
       }
 
       if (
@@ -265,9 +319,10 @@ class OfflineStorageManager {
 
     try {
       const transaction = db.transaction(this.STORE_CLAIMS, "readonly");
-      const claim = await this.requestResult<OfflineClaim | undefined>(
+      const storedClaim = await this.requestResult<OfflineClaim | undefined>(
         transaction.objectStore(this.STORE_CLAIMS).get(id),
       );
+      const claim = storedClaim ? this.hydrateClaim(storedClaim) : undefined;
       const belongsToActiveOwner = Boolean(
         claim && (claim.ownerId || "local-development") === this.ownerId(),
       );
