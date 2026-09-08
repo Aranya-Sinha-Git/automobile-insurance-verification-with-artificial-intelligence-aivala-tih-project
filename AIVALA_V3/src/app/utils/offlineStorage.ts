@@ -205,12 +205,12 @@ class OfflineStorageManager {
 
       // Android WebViews can reject structured-cloning a File returned by
       // MediaRecorder, while Blob is consistently supported by IndexedDB.
-      // Preserve the filename separately and store only a plain Blob payload.
-      const persistableVideo = claim.videoBlob instanceof Blob
-        ? new Blob([claim.videoBlob], {
-            type: claim.videoMimeType || claim.videoBlob.type || "application/octet-stream",
-          })
-        : claim.videoBlob;
+      // File.slice() returns a Blob view without synchronously copying the
+      // complete recording on the UI thread. Preserve the filename separately.
+      const persistableVideo =
+        typeof File !== "undefined" && claim.videoBlob instanceof File
+          ? claim.videoBlob.slice(0, claim.videoBlob.size, claim.videoMimeType || claim.videoBlob.type)
+          : claim.videoBlob;
       const normalized: OfflineClaim = {
         ...claim,
         ownerId: claim.ownerId || this.ownerId(),
