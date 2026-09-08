@@ -15,7 +15,7 @@ os.environ.setdefault("AIVALA_SECURITY_DB", str(Path(__file__).parent / "test-se
 
 from fraud_pipeline import AivalaFraudPipeline
 from legacy_evidence import canonical_json, generate_audit_receipt
-from main import CLAIM_HISTORY_LEDGER, _safe_inference_payload, _track
+from main import CLAIM_HISTORY_LEDGER, _safe_inference_payload, _track, readiness
 from main import app
 from auth import verify_bearer
 
@@ -83,6 +83,31 @@ def test_cors_allows_loopback_origin() -> None:
     )
     assert response.status_code == 200
     assert response.headers["access-control-allow-origin"] == "http://127.0.0.1:5173"
+
+
+def test_readiness_reports_private_model_services() -> None:
+    response = TestClient(app).get("/readiness")
+    payload = response.json()
+    assert set(payload["services"]) == {"gateway", "yolo", "qwen"}
+    assert payload["status"] in {"ready", "degraded"}
+
+
+def test_forensic_engine_exception_is_retryable_infrastructure_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "main.fraud_pipeline.run_5_layer_audit",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("forced detector crash")),
+    )
+    claim_id = f"forced-exception-{uuid.uuid4()}"
+    response = TestClient(app).post(
+        "/verify-claim/",
+        data={"claim_id": claim_id},
+        files={"file": ("evidence.mp4", b"not-a-real-video", "video/mp4")},
+    )
+    assert response.status_code == 503
+    payload = response.json()
+    assert payload["status"] == "INFRA_FAILURE"
+    assert payload["error_code"] == "FORENSIC_ENGINE_FAILURE"
+    assert "retr" in payload["reason"].lower()
 
 
 def test_screen_rerecording_failure_preserves_pipeline_schema(monkeypatch: pytest.MonkeyPatch) -> None:

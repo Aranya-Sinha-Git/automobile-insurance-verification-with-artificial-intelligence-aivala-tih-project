@@ -8,6 +8,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import type { HFAnalysisResult } from "@/app/utils/huggingFaceService";
 import { parseStoredAnalysis, readStoredAnalysis } from "@/app/utils/securityBackendService";
+import { readAccountJson, writeAccountJson } from "@/app/utils/accountStorage";
 
 export default function SettlementScreen() {
   const { claimId } = useParams();
@@ -18,22 +19,26 @@ export default function SettlementScreen() {
   const storedAnalysis = readStoredAnalysis(claimId);
   const aiData: HFAnalysisResult | null = parseStoredAnalysis(storedAnalysis);
   const isNoDamage = Boolean(aiData?.isNoDamage);
+  const isRejected = Boolean(aiData?.isRejected || aiData?.outcome === "FORENSIC_REJECTION");
+  const reviewRequired = Boolean(
+    aiData?.outcome === "REVIEW_REQUIRED" || aiData?.screenRecordingCheck?.flagged || aiData?.fiveStageSecurity?.overallStatus === "FLAGGED",
+  );
+  const eligible = Boolean(aiData && !isNoDamage && !isRejected && !reviewRequired && (aiData.estimatedCost || 0) > 0);
 
   const totalCost = aiData?.estimatedCost || 0;
   const cashPayout = Math.round(totalCost * 0.95);
 
   const confirmSettlement = () => {
     if (!claimId) return;
-    if (isNoDamage) {
-      toast.info("No settlement is available because no repairable damage was detected.");
+    if (!eligible) {
+      toast.info("A settlement preference is available only after a completed eligible damage result.");
       navigate("/app/dashboard");
       return;
     }
     try {
-      const claims = JSON.parse(localStorage.getItem("claims") || "[]");
-      localStorage.setItem(
+      const claims = readAccountJson<any[]>("claims", []);
+      writeAccountJson(
         "claims",
-        JSON.stringify(
           claims.map((claim: any) =>
             claim.id === claimId
               ? {
@@ -44,9 +49,8 @@ export default function SettlementScreen() {
                 }
               : claim,
           ),
-        ),
       );
-      toast.success("Settlement preference saved.");
+      toast.success("Preferred settlement option saved.");
     } catch {
       toast.error("Unable to save your settlement preference.");
       return;
@@ -78,8 +82,8 @@ export default function SettlementScreen() {
                       <Wrench className="h-6 w-6 text-blue-600" />
                     </div>
                     <div className="flex-1">
-                      <h3 className="font-medium mb-1">Direct Repair Coordination</h3>
-                      <p className="text-sm text-gray-600 mb-3">We arrange everything with our network garage</p>
+                      <h3 className="font-medium mb-1">Preferred repair option</h3>
+                      <p className="text-sm text-gray-600 mb-3">Save this preference for follow-up. No garage booking is made here.</p>
                       
                       <div className="space-y-2 text-sm">
                         <div className="flex items-center gap-2 text-gray-600">
@@ -88,7 +92,7 @@ export default function SettlementScreen() {
                         </div>
                         <div className="flex items-center gap-2 text-gray-600">
                           <Zap className="h-4 w-4" />
-                          <span>No upfront payment needed</span>
+                          <span>Estimated repair value only</span>
                         </div>
                       </div>
 
@@ -119,8 +123,8 @@ export default function SettlementScreen() {
                       <Banknote className="h-6 w-6 text-green-600" />
                     </div>
                     <div className="flex-1">
-                      <h3 className="font-medium mb-1">Cash Payout</h3>
-                      <p className="text-sm text-gray-600 mb-3">Direct bank transfer to your account</p>
+                          <h3 className="font-medium mb-1">Preferred cash option</h3>
+                      <p className="text-sm text-gray-600 mb-3">Save a preferred payout option for follow-up.</p>
                       
                       <div className="space-y-2 text-sm">
                         <div className="flex items-center gap-2 text-gray-600">
@@ -129,13 +133,13 @@ export default function SettlementScreen() {
                         </div>
                         <div className="flex items-center gap-2 text-gray-600">
                           <Zap className="h-4 w-4" />
-                          <span>Choose your own repair shop</span>
+                          <span>No payment is initiated here</span>
                         </div>
                       </div>
 
                       <div className="mt-3 p-3 bg-green-50 rounded-lg">
                         <p className="text-sm text-green-800">
-                          <strong>Settlement Amount:</strong>{" "}
+                          <strong>Estimated settlement:</strong>{" "}
                           {cashPayout > 0
                             ? `₹${cashPayout.toLocaleString()} (95% of estimate)`
                             : isNoDamage
@@ -153,7 +157,8 @@ export default function SettlementScreen() {
 
         <Card className="bg-blue-50 border-blue-200">
           <CardContent className="p-4">
-            <h3 className="text-sm font-medium mb-2">Recommended Repair Shops</h3>
+            <h3 className="text-sm font-medium mb-2">Example repair options</h3>
+            <p className="text-xs text-gray-500 mb-2">Demo information only; no shop is booked.</p>
             <div className="space-y-2">
               <div className="flex justify-between items-center text-sm">
                 <span>AutoCare Center, Andheri</span>
@@ -169,8 +174,8 @@ export default function SettlementScreen() {
       </div>
 
       <div className="p-4 bg-white border-t sticky bottom-0 z-10">
-        <Button className="w-full" size="lg" onClick={confirmSettlement} disabled={isNoDamage}>
-          {isNoDamage ? "No Settlement Available" : "Confirm Settlement"}
+        <Button className="w-full" size="lg" onClick={confirmSettlement} disabled={!eligible}>
+          {!aiData ? "Result Required" : isNoDamage ? "No Settlement Available" : isRejected ? "Forensic Rejection" : reviewRequired ? "Review Required" : "Save Preferred Option"}
         </Button>
       </div>
     </div>

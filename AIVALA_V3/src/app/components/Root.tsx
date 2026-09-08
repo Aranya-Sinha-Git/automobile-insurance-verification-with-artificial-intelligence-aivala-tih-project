@@ -4,16 +4,23 @@ import { Toaster } from "sonner";
 import { syncManager } from "@/app/utils/syncManager";
 import { auth } from "@/app/utils/firebase";
 import { onAuthStateChanged } from "firebase/auth";
+import { offlineStorage } from "@/app/utils/offlineStorage";
 
 export default function Root() {
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
-      if (user) syncManager.startAutoSync();
-      else syncManager.stopAutoSync();
+      syncManager.stopAutoSync();
+      delete (window as any).currentClaimVideoFile;
+      delete (window as any).currentClaimThumbnail;
+      void (async () => {
+        await offlineStorage.setActiveOwner(user?.uid || null);
+        if (user) syncManager.startAutoSync();
+      })();
     });
     return () => {
       unsubscribe();
       syncManager.stopAutoSync();
+      void offlineStorage.setActiveOwner(null);
     };
   }, []);
 

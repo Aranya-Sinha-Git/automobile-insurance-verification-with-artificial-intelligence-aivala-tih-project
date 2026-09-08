@@ -26,9 +26,9 @@ export default function FraudAnalytics() {
           <div className="flex items-center justify-between mb-6">
             <div>
               <h1 className="text-3xl mb-2">Fraud Analytics Dashboard</h1>
-              <p className="text-gray-600">Comprehensive fraud detection insights</p>
+              <p className="text-gray-600">Demo analytics for interface review; not connected to live claims</p>
             </div>
-            <Button>
+            <Button disabled title="Export is not connected to live analytics">
               <Download className="mr-2 h-4 w-4" />
               Export Report
             </Button>

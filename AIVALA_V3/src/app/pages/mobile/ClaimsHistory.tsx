@@ -5,11 +5,12 @@ import { Card, CardContent } from "@/app/components/ui/card";
 import { Badge } from "@/app/components/ui/badge";
 import { Input } from "@/app/components/ui/input";
 import { ArrowLeft, FileText, Search, Download } from "lucide-react";
+import { readAccountJson } from "@/app/utils/accountStorage";
 
 export default function ClaimsHistory() {
   const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState("");
-  const claims = JSON.parse(localStorage.getItem("claims") || "[]").map(
+  const claims = readAccountJson<any[]>("claims", []).map(
     (claim: any) => ({
       ...claim,
       type: claim.type || "auto",
@@ -37,6 +38,18 @@ export default function ClaimsHistory() {
 
     navigate(destination);
   };
+
+  const statusLabel = (status: string) => ({
+    approved: "DAMAGE DETECTED",
+    no_damage: "NO DAMAGE DETECTED",
+    review_required: "REVIEW REQUIRED",
+    flagged: "REVIEW REQUIRED",
+    rejected: "FORENSIC REJECTION",
+    system_error: "SYSTEM ERROR",
+    pending_upload: "PROCESSING",
+    processing: "PROCESSING",
+    failed_upload: "SYSTEM ERROR",
+  } as Record<string, string>)[status] || status.replaceAll("_", " ").toUpperCase();
 
   return (
     <div className="min-h-screen bg-gray-50 pb-20">
@@ -95,14 +108,15 @@ export default function ClaimsHistory() {
                   </div>
                 </div>
                 <Badge 
-                  variant={claim.status === 'approved' ? 'default' : claim.status === 'pending' ? 'secondary' : 'destructive'}
+                  variant={claim.status === 'approved' || claim.status === 'no_damage' ? 'default' : claim.status === 'pending' || claim.status === 'pending_upload' || claim.status === 'processing' ? 'secondary' : 'destructive'}
                   className={
-                    claim.status === 'approved' ? 'bg-green-500' : 
-                    claim.status === 'pending' ? 'bg-yellow-500' : 
-                    claim.status === 'flagged' ? 'bg-orange-500' : 'bg-red-500'
+                    claim.status === 'approved' ? 'bg-green-500' :
+                    claim.status === 'no_damage' ? 'bg-blue-500' :
+                    claim.status === 'pending' || claim.status === 'pending_upload' || claim.status === 'processing' ? 'bg-yellow-500' :
+                    claim.status === 'flagged' || claim.status === 'review_required' ? 'bg-orange-500' : 'bg-red-500'
                   }
                 >
-                  {String(claim.status).replaceAll("_", " ")}
+                  {statusLabel(String(claim.status))}
                 </Badge>
               </div>
               

@@ -16,8 +16,6 @@ import {
   Database,
   Scan,
   Cpu,
-  Copy,
-  Check,
 } from "lucide-react";
 import type { FiveStageSecurityDetails, FiveStageSecurityItem } from "@/app/utils/huggingFaceService";
 import { toast } from "sonner";
@@ -27,6 +25,7 @@ interface FiveStageSecurityCardProps {
   compact?: boolean;
   defaultExpanded?: boolean;
   className?: string;
+  auditReceipt?: string;
 }
 
 export default function FiveStageSecurityCard({
@@ -34,6 +33,7 @@ export default function FiveStageSecurityCard({
   compact = false,
   defaultExpanded = false,
   className = "",
+  auditReceipt,
 }: FiveStageSecurityCardProps) {
   const [isExpanded, setIsExpanded] = useState(defaultExpanded);
   const [copiedReceipt, setCopiedReceipt] = useState(false);
@@ -70,10 +70,10 @@ export default function FiveStageSecurityCard({
     },
     {
       stage: 5,
-      name: "Stage 5: YOLO/Qwen Analysis & Local Audit Receipt",
-      shortName: "Vision & Receipt",
+      name: "Stage 5: Optional public-web reverse search",
+      shortName: "Optional Search",
       status: "SKIPPED",
-      details: "No server-issued local audit receipt is stored for this older claim.",
+      details: "This optional check was not performed. A local audit receipt, when available, is shown separately below.",
     },
   ];
 
@@ -87,11 +87,13 @@ export default function FiveStageSecurityCard({
       ]
     : defaultStages;
 
-  const isAllPassed = stagesList.every((s) => s.status === "PASSED");
   const failedStage = stagesList.find((s) => s.status === "FAILED");
   const warningStage = stagesList.find((s) => s.status === "WARNING");
+  const requiredStages = stagesList.filter((s) => !(s.stage === 5 && s.status === "SKIPPED"));
+  const isAllPassed = requiredStages.length > 0 && requiredStages.every((s) => s.status === "PASSED") && !failedStage && !warningStage;
   const issueStage = failedStage || warningStage;
   const auditUnavailable = stagesList.every((s) => s.status === "SKIPPED");
+  const optionalStageSkipped = stagesList.some((s) => s.stage === 5 && s.status === "SKIPPED");
 
   const getStageIcon = (stageNum: number) => {
     switch (stageNum) {
@@ -185,7 +187,7 @@ export default function FiveStageSecurityCard({
                   }
                 >
                   {isAllPassed
-                    ? "5/5 Verified"
+                    ? "Checks complete"
                     : failedStage
                     ? "Security Failure"
                     : auditUnavailable
@@ -195,12 +197,16 @@ export default function FiveStageSecurityCard({
               </div>
               <p className="text-xs text-gray-500 mt-0.5">
                 {isAllPassed
-                  ? "Evidence checks and computer vision analysis completed"
+                  ? optionalStageSkipped
+                    ? "Required evidence checks completed; optional check was not performed"
+                    : "Evidence checks and computer vision analysis completed"
                   : failedStage
                   ? `Halted at Stage ${issueStage?.stage}: ${issueStage?.shortName}`
                   : auditUnavailable
                   ? "No server-issued audit is stored for this claim"
-                  : `Review Stage ${issueStage?.stage}: ${issueStage?.shortName}`}
+                  : issueStage
+                    ? `Review Stage ${issueStage.stage}: ${issueStage.shortName}`
+                    : "Optional checks were not performed"}
               </p>
             </div>
           </div>
@@ -235,7 +241,7 @@ export default function FiveStageSecurityCard({
                     ? "bg-red-50/80 border-red-200 shadow-xs"
                     : warning
                     ? "bg-orange-50/80 border-orange-200 shadow-xs"
-                    : "bg-gray-50/60 border-gray-200"
+                    : "bg-gray-50/60 dark:bg-gray-800/70 border-gray-200 dark:border-gray-700"
                 }`}
               >
                 <div
@@ -246,12 +252,12 @@ export default function FiveStageSecurityCard({
                       ? "bg-red-500 text-white"
                       : warning
                       ? "bg-orange-500 text-white"
-                      : "bg-gray-200 text-gray-600"
+                      : "bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-200"
                   }`}
                 >
                   {stg.stage}
                 </div>
-                <span className="text-[11px] font-medium text-gray-700 line-clamp-1">
+                <span className="text-[11px] font-medium text-gray-700 dark:text-gray-200 line-clamp-1">
                   {stg.shortName}
                 </span>
                 <span
@@ -309,19 +315,6 @@ export default function FiveStageSecurityCard({
                       <span className="font-mono font-medium text-blue-700 dark:text-blue-300">
                         {stg.metricValue}
                       </span>
-                      {stg.stage === 5 && stg.metricValue && (
-                        <button
-                          onClick={() => handleCopyReceipt(stg.metricValue)}
-                          className="ml-1 text-gray-400 hover:text-blue-600 transition-colors"
-                          title="Copy local audit receipt"
-                        >
-                          {copiedReceipt ? (
-                            <Check className="h-3 w-3 text-emerald-600" />
-                          ) : (
-                            <Copy className="h-3 w-3" />
-                          )}
-                        </button>
-                      )}
                     </div>
                   )}
 
@@ -330,6 +323,24 @@ export default function FiveStageSecurityCard({
             </motion.div>
           )}
         </AnimatePresence>
+
+        {auditReceipt && (
+          <div className="mt-3 pt-3 border-t border-blue-100/50 dark:border-blue-900/40">
+            <div className="flex items-center justify-between gap-2 text-xs">
+              <span className="text-gray-500">Local audit receipt</span>
+              <button
+                type="button"
+                onClick={() => handleCopyReceipt(auditReceipt)}
+                className="text-blue-600 hover:text-blue-800 font-medium"
+              >
+                {copiedReceipt ? "Copied" : "Copy receipt"}
+              </button>
+            </div>
+            <p className="mt-1 font-mono text-[10px] text-gray-600 dark:text-gray-300 break-all">
+              {auditReceipt}
+            </p>
+          </div>
+        )}
 
         {/* Footer Toggle text */}
         {compact && (

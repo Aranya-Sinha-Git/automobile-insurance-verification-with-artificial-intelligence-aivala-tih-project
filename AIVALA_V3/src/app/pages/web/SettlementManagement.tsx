@@ -14,7 +14,7 @@ export default function SettlementManagement() {
         <div className="p-6 pt-16 md:pt-6">
           <div className="mb-6">
             <h1 className="text-3xl mb-2">Settlement Management</h1>
-            <p className="text-gray-600">Track and manage claim settlements</p>
+              <p className="text-gray-600">Demo settlement records for interface review</p>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
@@ -90,7 +90,7 @@ export default function SettlementManagement() {
                         </td>
                         <td className="py-3 px-4">
                           {settlement.transactionHash ? (
-                            <Button variant="ghost" size="sm" className="text-blue-600">
+                            <Button disabled variant="ghost" size="sm" className="text-blue-600">
                               {settlement.transactionHash.slice(0, 8)}...
                               <ExternalLink className="ml-1 h-3 w-3" />
                             </Button>
@@ -99,7 +99,7 @@ export default function SettlementManagement() {
                           )}
                         </td>
                         <td className="py-3 px-4">
-                          <Button variant="outline" size="sm">View</Button>
+                          <Button disabled variant="outline" size="sm">View unavailable</Button>
                         </td>
                       </tr>
                     ))}

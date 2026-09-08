@@ -7,6 +7,7 @@ import {
   waitForSecurityGatewayReady,
 } from "./securityBackendService";
 import { offlineStorage, type OfflineClaim } from "./offlineStorage";
+import { readAccountJson, writeAccountJson } from "./accountStorage";
 
 class SyncManager {
   private isSyncing = false;
@@ -71,15 +72,13 @@ class SyncManager {
               false,
             );
             await offlineStorage.completeUpload(claimId);
-            const localClaims = JSON.parse(localStorage.getItem("claims") || "[]");
-            localStorage.setItem(
+            const localClaims = readAccountJson<any[]>("claims", []);
+            writeAccountJson(
               "claims",
-              JSON.stringify(
-                localClaims.map((item: any) =>
-                  item.id === claimId
-                    ? { ...item, status: "rejected", rejectionReason: error.message }
-                    : item,
-                ),
+              localClaims.map((item: any) =>
+                item.id === claimId
+                  ? { ...item, status: "rejected", rejectionReason: error.message }
+                  : item,
               ),
             );
             rejectedCount += 1;

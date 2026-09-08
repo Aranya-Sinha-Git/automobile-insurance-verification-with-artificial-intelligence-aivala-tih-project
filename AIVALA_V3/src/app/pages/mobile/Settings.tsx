@@ -4,39 +4,19 @@ import { Button } from "@/app/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/app/components/ui/card";
 import { Switch } from "@/app/components/ui/switch";
 import { Label } from "@/app/components/ui/label";
-import { ArrowLeft, Bell, Lock, Database, LogOut, Wifi, Shield, Trash2, Moon } from "lucide-react";
+import { ArrowLeft, Database, LogOut, Wifi, Shield, Trash2, Moon } from "lucide-react";
 import { offlineStorage } from "@/app/utils/offlineStorage";
+import { syncManager } from "@/app/utils/syncManager";
 import { useState } from "react";
 import { toast } from "sonner";
 import { getHFSpaceURL, setHFSpaceURL } from "@/app/utils/huggingFaceService";
 import { useTheme } from "next-themes";
-
-function clearUserClaimData() {
-  // Claims and offline evidence are device-local, so clear them at the
-  // account boundary to prevent the next Firebase user seeing prior data.
-  offlineStorage.clearAll();
-  const keysToRemove = [
-    "user",
-    "claims",
-    "pending_claim_draft",
-    "current_claim_draft_id",
-    "claimCapture",
-  ];
-  Object.keys(localStorage).forEach((key) => {
-    if (key.startsWith("ai_analysis_") || key.startsWith("claim_meta_")) {
-      keysToRemove.push(key);
-    }
-  });
-  keysToRemove.forEach((key) => localStorage.removeItem(key));
-  delete (window as any).currentClaimVideoFile;
-  delete (window as any).currentClaimThumbnail;
-}
+import { accountStorageKey } from "@/app/utils/accountStorage";
 
 export default function Settings() {
   const navigate = useNavigate();
   const [storageInfo, setStorageInfo] = useState(offlineStorage.getStorageInfo());
-  const [offlineMode, setOfflineMode] = useState(true);
-  const [autoSync, setAutoSync] = useState(true);
+  const [endpointDraft, setEndpointDraft] = useState(getHFSpaceURL());
   const { theme, setTheme } = useTheme();
 
   const handleClearOfflineData = () => {
@@ -80,29 +60,6 @@ export default function Settings() {
           </CardContent>
         </Card>
 
-        {/* Notifications */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Notifications</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <Bell className="h-5 w-5 text-gray-400" />
-                <Label>Push Notifications</Label>
-              </div>
-              <Switch defaultChecked />
-            </div>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <Bell className="h-5 w-5 text-gray-400" />
-                <Label>Email Notifications</Label>
-              </div>
-              <Switch defaultChecked />
-            </div>
-          </CardContent>
-        </Card>
-
         {/* Offline Mode */}
         <Card>
           <CardHeader>
@@ -117,7 +74,7 @@ export default function Settings() {
                   <p className="text-xs text-gray-500">Record claims without internet</p>
                 </div>
               </div>
-              <Switch checked={offlineMode} onCheckedChange={setOfflineMode} />
+              <span className="text-xs font-medium text-emerald-600">Available</span>
             </div>
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
@@ -127,7 +84,7 @@ export default function Settings() {
                   <p className="text-xs text-gray-500">Upload claims automatically</p>
                 </div>
               </div>
-              <Switch checked={autoSync} onCheckedChange={setAutoSync} />
+              <span className="text-xs font-medium text-emerald-600">Automatic</span>
             </div>
             
             {/* Storage Info */}
@@ -148,56 +105,39 @@ export default function Settings() {
           </CardContent>
         </Card>
 
-        {/* AI Inference Endpoint */}
+        {/* Developer diagnostics */}
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">AI Inference Server Endpoint</CardTitle>
+            <CardTitle className="text-base">Developer diagnostics</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
             <div className="space-y-1">
-              <Label className="text-xs text-gray-500">AI Server API URL (Local PC, Ngrok Tunnel, or Cloud Gateway)</Label>
+              <Label className="text-xs text-gray-500">Gateway URL (only change this for local testing)</Label>
               <input
                 type="text"
                 className="w-full px-3 py-2 border rounded-md text-sm font-mono"
-                defaultValue={getHFSpaceURL()}
-                onChange={(e) => {
-                  localStorage.removeItem("security_backend_url");
-                  setHFSpaceURL(e.target.value);
-                }}
+                value={endpointDraft}
+                onChange={(e) => setEndpointDraft(e.target.value)}
                 placeholder="https://curfew-stump-tripod.ngrok-free.dev"
               />
             </div>
-            <div className="flex flex-wrap gap-2 text-xs">
-              <button
-                type="button"
-                className="px-2.5 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded border text-xs font-medium"
-                onClick={() => {
-                  const input = document.querySelector('input[placeholder*="ngrok"]') as HTMLInputElement;
-                  if (input) {
-                    input.value = "https://curfew-stump-tripod.ngrok-free.dev";
-                    localStorage.setItem("hf_space_url", "https://curfew-stump-tripod.ngrok-free.dev");
-                    localStorage.removeItem("security_backend_url");
-                  }
-                }}
-              >
-                Use AIVALA ngrok gateway
-              </button>
-              <button
-                type="button"
-                className="px-2.5 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded border text-xs font-medium"
-                onClick={() => {
-                  const input = document.querySelector('input[placeholder*="ngrok"]') as HTMLInputElement;
-                  if (input) {
-                    input.value = "https://fabrix13-aivala.hf.space";
-                    localStorage.setItem("hf_space_url", "https://fabrix13-aivala.hf.space");
-                  }
-                }}
-              >
-                Set to Cloud AI Gateway
-              </button>
-            </div>
+            <Button variant="outline" onClick={async () => {
+              try {
+                const url = new URL(endpointDraft.trim());
+                if (!/^https?:$/.test(url.protocol)) throw new Error("invalid protocol");
+                const controller = new AbortController();
+                const timeout = window.setTimeout(() => controller.abort(), 5000);
+                const response = await fetch(`${endpointDraft.replace(/\/+$/, "")}/`, { signal: controller.signal, headers: { "ngrok-skip-browser-warning": "true" } });
+                window.clearTimeout(timeout);
+                if (!response.ok) throw new Error("Gateway is not ready");
+                setHFSpaceURL(endpointDraft);
+                toast.success("Gateway endpoint saved.");
+              } catch {
+                toast.error("Gateway endpoint could not be reached. The current endpoint was kept.");
+              }
+            }}>Save and test endpoint</Button>
             <p className="text-xs text-gray-500">
-              APK communication uses the <strong>AIVALA ngrok HTTPS gateway</strong> so the device never targets your PC's localhost address.
+              The APK should use the configured AIVALA HTTPS gateway. Endpoint changes are intended for developer testing.
             </p>
           </CardContent>
         </Card>
@@ -212,14 +152,10 @@ export default function Settings() {
               <div className="flex gap-2 mb-2">
                 <Shield className="h-4 w-4 text-blue-600 flex-shrink-0 mt-0.5" />
                 <div className="text-xs text-blue-800">
-                  <strong>End-to-End Encryption:</strong> All claim videos are encrypted on-device before transmission. Raw videos are purged after damage extraction in compliance with IRDAI guidelines.
+                  <strong>Local evidence handling:</strong> Pending recordings stay on this device until verification succeeds or you clear offline data.
                 </div>
               </div>
             </div>
-            <Button variant="outline" className="w-full justify-start" onClick={() => navigate("/app/dashboard")}>
-              <Lock className="mr-2 h-4 w-4" />
-              Change Password
-            </Button>
             <Button variant="outline" className="w-full justify-start text-red-600" onClick={handleClearOfflineData}>
               <Trash2 className="mr-2 h-4 w-4" />
               Clear Offline Data
@@ -231,7 +167,10 @@ export default function Settings() {
           variant="destructive"
           className="w-full"
           onClick={async () => {
-            clearUserClaimData();
+            syncManager.stopAutoSync();
+            delete (window as any).currentClaimVideoFile;
+            delete (window as any).currentClaimThumbnail;
+            localStorage.removeItem(accountStorageKey("claimCapture"));
             await logoutFirebase();
             navigate("/", { replace: true });
           }}

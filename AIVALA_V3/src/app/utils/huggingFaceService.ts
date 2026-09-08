@@ -14,6 +14,7 @@ import {
   type DamageContext,
 } from "./repairCostEstimator";
 import { computeFraudScore, type FraudAnalysis } from "./fraudScoreEngine";
+import { accountStorageKey, readAccountJson, writeAccountJson } from "./accountStorage";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -111,6 +112,9 @@ export interface HFAnalysisResult {
   damageContext?: DamageContext;
   /** VLM assessment of whether evidence appears to have been filmed from a display */
   screenRecordingCheck?: ScreenRecordingCheck;
+  /** Server-issued receipt for the completed local audit, separate from Layer 5. */
+  cryptographicLedgerReceipt?: string;
+  outcome?: "DAMAGE_DETECTED" | "NO_DAMAGE_DETECTED" | "REVIEW_REQUIRED" | "FORENSIC_REJECTION" | "SYSTEM_ERROR";
 }
 
 // ---------------------------------------------------------------------------
@@ -229,8 +233,7 @@ export async function analyzeClaimVideo(
       ? videoBlobOrFile.name
       : `claim_${claimId}.mp4`;
   formData.append("file", videoBlobOrFile, filename);
-  const storedMeta = localStorage.getItem(`claim_meta_${claimId}`);
-  const claimMeta = storedMeta ? JSON.parse(storedMeta) : {};
+  const claimMeta = readAccountJson<Record<string, any>>(`claim_meta_${claimId}`, {});
   const reportedDamageType =
     Array.isArray(claimMeta.damageTypes) && claimMeta.damageTypes.length > 0
       ? claimMeta.damageTypes.join(", ")
@@ -346,8 +349,9 @@ export async function analyzeClaimVideo(
     };
   });
 
-  const isRejected = detections.length === 0 || costBreakdown.totalCost === 0;
-  const rejectionReason = isRejected
+  const isNoDamage = detections.length === 0 || costBreakdown.totalCost === 0;
+  const isRejected = false;
+  const rejectionReason = isNoDamage
     ? costBreakdown.totalCost === 0
       ? "Estimated settlement is ₹0 (No repairable damage cost)"
       : "No vehicle damage detected in video evidence"
@@ -361,15 +365,15 @@ export async function analyzeClaimVideo(
     : "Parts ₹0 + Labor ₹0 + Tax ₹0 = ₹0 Total";
 
   const modelReasoning: string[] = [
-    isRejected
+    isNoDamage
       ? (costBreakdown.totalCost === 0
           ? "Primary Evidence: Visual detection produced zero eligible vehicle damage classes."
           : "Primary Evidence: No physical vehicle damage or structural deformation detected in video evidence.")
       : `Primary Evidence: Identified ${detections.length} damage area(s) (${detectedNames}) with peak AI confidence of ${Math.round(Math.max(...detections.map((d) => d.confidence || 0), 0) * 100)}%.`,
-    isRejected
+    isNoDamage
       ? "Cost Formula & Valuation: Base ₹0 + Labor ₹0 + GST ₹0 = ₹0 Total Settlement Valuation."
       : `Cost Formula & Valuation: ${mathFormula}`,
-    isRejected
+    isNoDamage
       ? "Audit Verification: Claim DENIED — zero settlement valuation or unverified damage evidence."
       : `Audit Verification: Direct YOLO/Qwen analysis completed; local gateway evidence checks were not run.`
   ];
@@ -386,18 +390,20 @@ export async function analyzeClaimVideo(
     detection_frames: detectionFrames,
     detections,
     source_frame: data.source_frame,
-    summary: isRejected
+    summary: isNoDamage
       ? "No damage detected in video evidence"
       : data.summary || "AI analysis complete",
     costBreakdown,
     estimatedCost: costBreakdown.totalCost,
     fraudAnalysis,
-    fraudScore: isRejected ? 100 : fraudAnalysis.totalScore,
+    fraudScore: fraudAnalysis.totalScore,
     damageAreas,
     isAiGenerated: true,
     damageContext,
     screenRecordingCheck,
     isRejected,
+    isNoDamage,
+    outcome: screenRecordingCheck.flagged ? "REVIEW_REQUIRED" : isNoDamage ? "NO_DAMAGE_DETECTED" : "DAMAGE_DETECTED",
     rejectionReason,
     modelReasoning,
     fiveStageSecurity: {
@@ -442,18 +448,18 @@ export async function analyzeClaimVideo(
   };
 
   // Persist to localStorage + IndexedDB
-  localStorage.setItem(`ai_analysis_${claimId}`, JSON.stringify(result));
+  localStorage.setItem(accountStorageKey(`ai_analysis_${claimId}`), JSON.stringify(result));
 
   // Update claim list in localStorage
-  const localClaims = JSON.parse(localStorage.getItem("claims") || "[]");
+  const localClaims = readAccountJson<any[]>("claims", []);
   const updatedLocalClaims = localClaims.map((c: any) => {
     if (c.id === claimId) {
       return {
         ...c,
-        status: isRejected
-          ? "rejected"
+        status: isNoDamage
+          ? "no_damage"
           : screenRecordingCheck.flagged
-          ? "flagged"
+          ? "review_required"
           : "approved",
         estimatedCost: result.estimatedCost,
         fraudScore: result.fraudScore,
@@ -463,12 +469,12 @@ export async function analyzeClaimVideo(
     }
     return c;
   });
-  localStorage.setItem("claims", JSON.stringify(updatedLocalClaims));
+  writeAccountJson("claims", updatedLocalClaims);
   await offlineStorage.completeUpload(claimId);
 
   onStatus?.("Analysis complete.");
-  if (isRejected) {
-    toast.error("Claim Failed: No vehicle damage detected in video.");
+  if (isNoDamage) {
+    toast.info("No damage detected in video evidence.");
   } else if (screenRecordingCheck.flagged) {
     toast.warning("Claim flagged for manual screen replay review.");
   } else {

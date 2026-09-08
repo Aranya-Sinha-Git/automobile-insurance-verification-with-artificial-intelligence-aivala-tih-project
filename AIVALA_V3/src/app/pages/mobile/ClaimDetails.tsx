@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { offlineStorage } from "@/app/utils/offlineStorage";
+import { accountStorageKey, readAccountJson, writeAccountJson } from "@/app/utils/accountStorage";
 
 export interface DamageCategoryOption {
   value: string;
@@ -70,15 +71,73 @@ export default function ClaimDetails() {
     .slice(0, 16);
 
   const [formData, setFormData] = useState({
-    vehicle: "Honda City 2022, MH-02-AB-1234",
-    damageTypes: ["dent", "scratch"] as string[],
-    damageLocation: "front",
-    damagedPartsCount: 2,
+    vehicle: "",
+    damageTypes: [] as string[],
+    damageLocation: "",
+    damagedPartsCount: 1,
     damageExtent: "localized",
     date: defaultDateTime,
-    location: "Mumbai, Maharashtra",
+    location: "",
     description: "",
   });
+  const hydrated = useRef(false);
+  const draftIdKey = accountStorageKey("current_claim_draft_id");
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const draftId = localStorage.getItem(draftIdKey);
+      const draft = draftId ? await offlineStorage.getClaimAsync(draftId) : null;
+      if (cancelled) return;
+      const data = (draft?.claimData || {}) as Record<string, any>;
+      setFormData((prev) => ({
+        ...prev,
+        vehicle: String((draft as any)?.vehicle || data.vehicleInfo || ""),
+        damageTypes: Array.isArray((draft as any)?.damageTypes)
+          ? (draft as any).damageTypes
+          : Array.isArray(data.damageTypes) ? data.damageTypes : [],
+        damageLocation: String((draft as any)?.damageContext?.location || data.damageContext?.location || ""),
+        damagedPartsCount: Number((draft as any)?.damageContext?.partsCount || data.damageContext?.partsCount || 1),
+        damageExtent: String((draft as any)?.damageContext?.extent || data.damageContext?.extent || "localized"),
+        date: String((draft as any)?.date || data.date || prev.date),
+        location: String((draft as any)?.location || data.location || ""),
+        description: String((draft as any)?.description || data.description || ""),
+      }));
+      hydrated.current = true;
+    })();
+    return () => { cancelled = true; };
+  }, [draftIdKey]);
+
+  useEffect(() => {
+    if (!hydrated.current) return;
+    const draftId = localStorage.getItem(draftIdKey);
+    if (!draftId) return;
+    void offlineStorage.updateClaim(draftId, {
+      vehicle: formData.vehicle,
+      damageTypes: formData.damageTypes,
+      damageContext: {
+        location: formData.damageLocation,
+        partsCount: formData.damagedPartsCount,
+        extent: formData.damageExtent,
+        damageTypes: formData.damageTypes,
+      },
+      date: formData.date.replace("T", " "),
+      location: formData.location,
+      description: formData.description,
+      claimData: {
+        vehicleInfo: formData.vehicle,
+        damageTypes: formData.damageTypes,
+        damageContext: {
+          location: formData.damageLocation,
+          partsCount: formData.damagedPartsCount,
+          extent: formData.damageExtent,
+        },
+        date: formData.date,
+        location: formData.location,
+        description: formData.description,
+      },
+    });
+  }, [formData, draftIdKey]);
 
   /**
    * Toggle a damage category in the multi-select list.
@@ -146,20 +205,29 @@ export default function ClaimDetails() {
       !formData.vehicle.trim() ||
       !formData.date ||
       !formData.location.trim() ||
+      !formData.damageLocation ||
       formData.damagedPartsCount < 1
     ) {
       toast.error("Please complete all required claim details.");
       return;
     }
+    if (new Date(formData.date).getTime() > Date.now()) {
+      toast.error("Incident date and time cannot be in the future.");
+      return;
+    }
 
     setIsStartingAnalysis(true);
     try {
-      const draftId = localStorage.getItem("current_claim_draft_id");
+      const draftId = localStorage.getItem(draftIdKey);
       const draftClaim = draftId
         ? await offlineStorage.getClaimAsync(draftId)
         : null;
       const videoFile: Blob | File | undefined =
-        (window as any).currentClaimVideoFile || draftClaim?.videoBlob;
+        draftClaim?.videoBlob instanceof Blob
+          ? draftClaim.videoBlob
+          : draftId
+            ? undefined
+            : (window as any).currentClaimVideoFile;
       if (!videoFile) {
         toast.error("Saved evidence was not found. Please record the video again.");
         navigate("/app/video-recording");
@@ -169,7 +237,7 @@ export default function ClaimDetails() {
       const claimId = draftId || `CLM-${Date.now()}`;
       const thumbnail =
         (window as any).currentClaimThumbnail ||
-        localStorage.getItem("claimCapture") ||
+        localStorage.getItem(accountStorageKey("claimCapture")) ||
         "";
 
       const formattedDamageType = formData.damageTypes.join(", ");
@@ -221,26 +289,27 @@ export default function ClaimDetails() {
       
       const { videoBlob: _videoBlob, ...claimMetadata } = newClaim;
       try {
-        const existingClaims = JSON.parse(localStorage.getItem("claims") || "[]");
+        const existingClaims = readAccountJson<any[]>("claims", []);
         const deduplicatedClaims = existingClaims.filter(
           (claim: any) => claim.id !== claimId,
         );
         deduplicatedClaims.unshift(claimMetadata);
         if (deduplicatedClaims.length > 20) deduplicatedClaims.length = 20;
-        localStorage.setItem("claims", JSON.stringify(deduplicatedClaims));
+        writeAccountJson("claims", deduplicatedClaims);
       } catch (quotaErr) {
         console.warn("LocalStorage claims list full, continuing:", quotaErr);
       }
 
       try {
-        localStorage.setItem(`claim_meta_${claimId}`, JSON.stringify(claimMetadata));
+        writeAccountJson(`claim_meta_${claimId}`, claimMetadata);
       } catch (metaErr) {
         console.warn("LocalStorage claim_meta full, continuing:", metaErr);
       }
 
       try {
-        localStorage.removeItem("current_claim_draft_id");
-        localStorage.removeItem("pending_claim_draft");
+        localStorage.removeItem(draftIdKey);
+        localStorage.removeItem(accountStorageKey("pending_claim_draft"));
+        localStorage.removeItem(accountStorageKey("claimCapture"));
       } catch {
         // Safe ignore
       }
@@ -307,6 +376,7 @@ export default function ClaimDetails() {
                 <Input
                   id="incident-date"
                   type="datetime-local"
+                  max={defaultDateTime}
                   value={formData.date}
                   className="min-w-0 w-full bg-white text-xs"
                   onChange={(event) =>
@@ -397,7 +467,7 @@ export default function ClaimDetails() {
                     className={`relative p-2.5 rounded-lg text-left transition-all duration-150 flex flex-col justify-between border cursor-pointer select-none group ${
                       isSelected
                         ? "bg-blue-50/90 border-blue-500 ring-2 ring-blue-500/20 shadow-xs"
-                        : "bg-gray-50/60 border-gray-200/80 hover:bg-gray-100/70 hover:border-gray-300 text-gray-700"
+                        : "bg-gray-50/60 dark:bg-gray-800/80 border-gray-200/80 dark:border-gray-600 hover:bg-gray-100/70 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-100"
                     }`}
                   >
                     <div className="flex items-center justify-between mb-1 w-full">
@@ -408,7 +478,7 @@ export default function ClaimDetails() {
                         className={`w-4 h-4 rounded-full flex items-center justify-center transition-colors ${
                           isSelected
                             ? "bg-blue-600 text-white"
-                            : "border border-gray-300 group-hover:border-gray-400 bg-white"
+                            : "border border-gray-300 dark:border-gray-500 group-hover:border-gray-400 bg-white dark:bg-gray-700"
                         }`}
                       >
                         {isSelected && <Check className="h-2.5 w-2.5 stroke-[3]" />}
@@ -417,12 +487,12 @@ export default function ClaimDetails() {
                     <div>
                       <p
                         className={`text-xs font-semibold leading-tight ${
-                          isSelected ? "text-blue-900 font-bold" : "text-gray-800"
+                          isSelected ? "text-blue-900 dark:text-blue-200 font-bold" : "text-gray-800 dark:text-gray-100"
                         }`}
                       >
                         {category.label}
                       </p>
-                      <p className="text-[10px] text-gray-500 leading-tight mt-0.5 line-clamp-1">
+                      <p className="text-[10px] text-gray-500 dark:text-gray-300 leading-tight mt-0.5 line-clamp-1">
                         {category.shortDesc}
                       </p>
                     </div>
@@ -488,6 +558,9 @@ export default function ClaimDetails() {
                     setFormData({ ...formData, damageLocation: event.target.value })
                   }
                 >
+                  <option value="" disabled>
+                    Select a location
+                  </option>
                   {damageLocations.map((location) => (
                     <option key={location.value} value={location.value}>
                       {location.label}

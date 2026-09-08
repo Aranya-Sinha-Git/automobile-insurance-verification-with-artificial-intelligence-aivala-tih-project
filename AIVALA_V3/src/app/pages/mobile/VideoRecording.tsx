@@ -22,6 +22,7 @@ import { Progress } from "@/app/components/ui/progress";
 import { useNetworkStatus } from "@/app/utils/networkStatus";
 import { toast } from "sonner";
 import { offlineStorage } from "@/app/utils/offlineStorage";
+import { accountStorageKey } from "@/app/utils/accountStorage";
 
 const MIN_RECORDING_SECONDS = 2;
 
@@ -71,7 +72,14 @@ export default function VideoRecording() {
         return stream;
       } catch (e) {
         console.error("Camera access failed completely", e);
-        toast.error("Camera access is required to record claim evidence.");
+        const code = (e as DOMException)?.name;
+        toast.error(
+          code === "NotAllowedError"
+            ? "Camera permission was denied. Allow camera access in your device settings and try again."
+            : code === "NotFoundError"
+              ? "No camera is available on this device."
+              : "Camera is unavailable. Close other camera apps and try again.",
+        );
         return null;
       }
     }
@@ -92,6 +100,19 @@ export default function VideoRecording() {
       if (timerRef.current) clearInterval(timerRef.current);
     };
   }, []);
+
+  useEffect(() => {
+    const protectUnsavedRecording = (event: BeforeUnloadEvent) => {
+      if (recorded || recording) {
+        event.preventDefault();
+        event.returnValue = "";
+      }
+    };
+    window.addEventListener("beforeunload", protectUnsavedRecording);
+    return () => {
+      window.removeEventListener("beforeunload", protectUnsavedRecording);
+    };
+  }, [recorded, recording]);
 
   // 🚀 START LIVE VIDEO RECORDING
   const startRecording = async () => {
@@ -224,7 +245,7 @@ export default function VideoRecording() {
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
         const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
         setCapturedImage(dataUrl);
-        localStorage.setItem("claimCapture", dataUrl);
+        localStorage.setItem(accountStorageKey("claimCapture"), dataUrl);
       }
     };
   };
@@ -241,8 +262,9 @@ export default function VideoRecording() {
     continueInFlightRef.current = true;
     setIsSavingEvidence(true);
     try {
+      const draftKey = accountStorageKey("current_claim_draft_id");
       const draftId =
-        localStorage.getItem("current_claim_draft_id") || `CLM-${Date.now()}`;
+        localStorage.getItem(draftKey) || `CLM-${Date.now()}`;
       const saved = await offlineStorage.saveClaim(
         {
           id: draftId,
@@ -263,9 +285,9 @@ export default function VideoRecording() {
         return;
       }
 
-      localStorage.setItem("current_claim_draft_id", draftId);
+      localStorage.setItem(draftKey, draftId);
       localStorage.setItem(
-        "pending_claim_draft",
+        accountStorageKey("pending_claim_draft"),
         JSON.stringify({
           id: draftId,
           image: capturedImage,
@@ -299,6 +321,7 @@ export default function VideoRecording() {
             variant="ghost"
             size="icon"
             onClick={() => {
+              if (recorded && !window.confirm("Your unsaved recording will be discarded. Leave this screen?")) return;
               stopCameraStream();
               navigate("/app/new-claim");
             }}

@@ -17,7 +17,7 @@ AIVALA is an automated motor insurance claims processing engine designed to cut 
 ## System Architecture
 
 ```
- Mobile App (Live Camera Capture)  -->  FastAPI Evidence Gateway (Port 8000)
+Mobile App (Live Camera Capture)  -->  FastAPI Evidence Gateway (Port 8010)
                                                  |
          +---------------------------------------+---------------------------------------+
          |                                                                               |
@@ -41,7 +41,7 @@ AIVALA is an automated motor insurance claims processing engine designed to cut 
 
 | Subsystem / Path | Description |
 | --- | --- |
-| **`start_local_ai.py`** | Primary launcher that orchestrates Qwen (7860), YOLO (8001), Evidence Gateway (8000), and tunnels. |
+| **`start_local_ai.py`** | Primary launcher that orchestrates Qwen (7860), YOLO (8001), Evidence Gateway (8010), and tunnels. |
 | **`severity_api.py`** | Server hosting the fine-tuned Qwen Vision-Language Model for damage severity analysis. |
 | **`backend/backend/`** | Canonical FastAPI gateway containing the five-layer engine, legacy mobile compatibility checks, and expert system. |
 | **`backend/backend/data/`** | Persistent fingerprint database used by both claim endpoints. |
@@ -91,7 +91,7 @@ The launcher loads device-local settings from the gitignored `.env.local` file w
 | --- | --- | --- | --- |
 | **Qwen Severity API** | `7860` | `http://localhost:7860/health` | Vision-Language Model severity engine |
 | **YOLO Inference API** | `8001` | `http://localhost:8001/health` | Damage localization & segmentation |
-| **Evidence Gateway** | `AIVALA_SECURITY_PORT` (default `8000`) | `http://localhost:<port>/` | FastAPI gateway & 5-layer forensic engine |
+| **Evidence Gateway** | `AIVALA_SECURITY_PORT` (default `8010`) | `http://localhost:<port>/` | FastAPI gateway & 5-layer forensic engine; `/readiness` reports gateway/YOLO/Qwen availability |
 
 ---
 

@@ -50,7 +50,7 @@ SECURITY_BACKEND_DIR = ROOT_DIR / "backend" / "backend"
 YOLO_CONFIG_DIR = SECURITY_BACKEND_DIR / "data" / "ultralytics"
 SEVERITY_PORT = 7860
 INFERENCE_PORT = 8001
-SECURITY_PORT = int(os.getenv("AIVALA_SECURITY_PORT", "8000"))
+SECURITY_PORT = int(os.getenv("AIVALA_SECURITY_PORT", "8010"))
 
 
 def _truthy(value: str | None) -> bool:
@@ -175,8 +175,10 @@ def main() -> int:
         if not wait_for_health(f"http://127.0.0.1:{INFERENCE_PORT}/health", "YOLO Inference API", yolo, 90):
             raise RuntimeError("YOLO Inference API failed its health check")
 
+        enable_tunnel = _truthy(os.environ.get("AIVALA_ENABLE_TUNNEL")) and not _truthy(os.environ.get("AIVALA_SKIP_TUNNEL"))
         gateway_env = os.environ.copy()
         gateway_env["AI_INFERENCE_SERVER_URL"] = f"http://127.0.0.1:{INFERENCE_PORT}/analyze-video"
+        gateway_env.setdefault("AIVALA_AUTH_REQUIRED", "1" if enable_tunnel else "0")
         print(f"\n[3/4] Launching Evidence Verification Gateway (port {SECURITY_PORT})...")
         gateway = subprocess.Popen(
             [sys.executable, "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", str(SECURITY_PORT)],
@@ -187,7 +189,6 @@ def main() -> int:
         if not wait_for_health(f"http://127.0.0.1:{SECURITY_PORT}/health", "Evidence Verification Gateway", gateway, 90):
             raise RuntimeError("Evidence Verification Gateway failed its health check")
 
-        enable_tunnel = _truthy(os.environ.get("AIVALA_ENABLE_TUNNEL")) and not _truthy(os.environ.get("AIVALA_SKIP_TUNNEL"))
         public_url = None
         if enable_tunnel:
             print(f"\n[4/4] Opening validated ngrok tunnel for mobile access...")

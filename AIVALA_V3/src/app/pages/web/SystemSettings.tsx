@@ -16,7 +16,7 @@ export default function SystemSettings() {
         <div className="p-6 pt-16 md:pt-6">
           <div className="mb-6">
             <h1 className="text-3xl mb-2">System Settings</h1>
-            <p className="text-gray-600">Configure system parameters and integrations</p>
+            <p className="text-gray-600">Demo configuration screens; changes are not connected to backend services</p>
           </div>
 
           <Tabs defaultValue="api" className="space-y-4">
@@ -38,14 +38,14 @@ export default function SystemSettings() {
                     <Label>Production API Key</Label>
                     <div className="flex gap-2">
                       <Input type="password" value="••••••••••••••••••••••••" readOnly />
-                      <Button variant="outline">Regenerate</Button>
+                      <Button variant="outline" disabled>Regenerate</Button>
                     </div>
                   </div>
                   <div className="space-y-2">
                     <Label>Development API Key</Label>
                     <div className="flex gap-2">
                       <Input type="password" value="••••••••••••••••••••••••" readOnly />
-                      <Button variant="outline">Regenerate</Button>
+                      <Button variant="outline" disabled>Regenerate</Button>
                     </div>
                   </div>
                 </CardContent>
@@ -67,7 +67,7 @@ export default function SystemSettings() {
                         <p className="text-sm text-gray-500">SHA-256 or HMAC-SHA256 receipts stored locally</p>
                       </div>
                     </div>
-                    <Switch defaultChecked />
+                    <Switch defaultChecked disabled />
                   </div>
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
@@ -77,7 +77,7 @@ export default function SystemSettings() {
                         <p className="text-sm text-gray-500">Direct settlements</p>
                       </div>
                     </div>
-                    <Switch defaultChecked />
+                    <Switch defaultChecked disabled />
                   </div>
                 </CardContent>
               </Card>
@@ -95,21 +95,21 @@ export default function SystemSettings() {
                       <Bell className="h-5 w-5 text-gray-400" />
                       <Label>Fraud Alert Notifications</Label>
                     </div>
-                    <Switch defaultChecked />
+                    <Switch defaultChecked disabled />
                   </div>
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
                       <Bell className="h-5 w-5 text-gray-400" />
                       <Label>Claim Approval Notifications</Label>
                     </div>
-                    <Switch defaultChecked />
+                    <Switch defaultChecked disabled />
                   </div>
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
                       <Bell className="h-5 w-5 text-gray-400" />
                       <Label>Settlement Completion</Label>
                     </div>
-                    <Switch defaultChecked />
+                    <Switch defaultChecked disabled />
                   </div>
                 </CardContent>
               </Card>
@@ -119,7 +119,7 @@ export default function SystemSettings() {
               <Card>
                 <CardHeader>
                   <CardTitle>Recent Activity</CardTitle>
-                  <CardDescription>System audit logs</CardDescription>
+                  <CardDescription>Demo audit entries for interface review</CardDescription>
                 </CardHeader>
                 <CardContent>
                   <div className="space-y-3 text-sm">

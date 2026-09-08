@@ -3,7 +3,7 @@ import Root from "@/app/components/Root";
 import MobileApp from "@/app/pages/mobile/MobileApp";
 import WebDashboard from "@/app/pages/web/WebDashboard";
 import NotFound from "@/app/components/NotFound";
-import RequireAuth from "@/app/components/RequireAuth";
+import RequireAuth, { WebRequireAuth } from "@/app/components/RequireAuth";
 
 // Mobile app routes
 import Welcome from "@/app/pages/mobile/Welcome";
@@ -68,12 +68,14 @@ export const router = createHashRouter([
         Component: WebDashboard,
         children: [
           { path: "login", Component: WebLogin },
-          { path: "dashboard", Component: WebMainDashboard },
-          { path: "claims", Component: ClaimsManagement },
-          { path: "fraud-analytics", Component: FraudAnalytics },
-          { path: "settlements", Component: SettlementManagement },
-          { path: "team", Component: TeamManagement },
-          { path: "settings", Component: SystemSettings },
+          { Component: WebRequireAuth, children: [
+            { path: "dashboard", Component: WebMainDashboard },
+            { path: "claims", Component: ClaimsManagement },
+            { path: "fraud-analytics", Component: FraudAnalytics },
+            { path: "settlements", Component: SettlementManagement },
+            { path: "team", Component: TeamManagement },
+            { path: "settings", Component: SystemSettings },
+          ] },
         ],
       },
       

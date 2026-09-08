@@ -6,13 +6,21 @@ import { Input } from "@/app/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/app/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/app/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/app/components/ui/tabs";
-import { Search, Filter, Download, Eye, CheckCircle, XCircle, Flag } from "lucide-react";
+import { Search, Download, Eye, CheckCircle, XCircle, Flag } from "lucide-react";
 import { mockClaims } from "@/app/data/mockData";
 import { useState } from "react";
 import FiveStageSecurityCard from "@/app/components/security/FiveStageSecurityCard";
 
 export default function ClaimsManagement() {
   const [selectedClaim, setSelectedClaim] = useState<typeof mockClaims[0] | null>(null);
+  const [search, setSearch] = useState("");
+  const [status, setStatus] = useState("all");
+  const [type, setType] = useState("all");
+  const visibleClaims = mockClaims.filter((claim) => {
+    const query = search.trim().toLowerCase();
+    const matchesSearch = !query || [claim.id, claim.customerName, claim.customerId].some((value) => String(value).toLowerCase().includes(query));
+    return matchesSearch && (status === "all" || claim.status === status) && (type === "all" || claim.type === type);
+  });
 
   return (
     <div className="flex h-screen bg-gray-100">
@@ -23,9 +31,9 @@ export default function ClaimsManagement() {
           <div className="flex items-center justify-between mb-6">
             <div>
               <h1 className="text-3xl mb-2">Claims Management</h1>
-              <p className="text-gray-600">Review and process insurance claims</p>
+              <div className="flex items-center gap-2"><p className="text-gray-600">Demo claims for interface review</p><Badge variant="secondary">DEMO DATA</Badge></div>
             </div>
-            <Button>
+            <Button disabled title="Export is not connected to a live claims service">
               <Download className="mr-2 h-4 w-4" />
               Export Report
             </Button>
@@ -37,10 +45,10 @@ export default function ClaimsManagement() {
                 <div className="flex-1">
                   <div className="relative">
                     <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
-                    <Input placeholder="Search by ID, customer name..." className="pl-10" />
+                    <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search by ID, customer name..." className="pl-10" />
                   </div>
                 </div>
-                <Select defaultValue="all">
+                <Select value={status} onValueChange={setStatus}>
                   <SelectTrigger className="w-[180px]">
                     <SelectValue placeholder="Status" />
                   </SelectTrigger>
@@ -52,7 +60,7 @@ export default function ClaimsManagement() {
                     <SelectItem value="flagged">Flagged</SelectItem>
                   </SelectContent>
                 </Select>
-                <Select defaultValue="all">
+                <Select value={type} onValueChange={setType}>
                   <SelectTrigger className="w-[180px]">
                     <SelectValue placeholder="Type" />
                   </SelectTrigger>
@@ -61,18 +69,13 @@ export default function ClaimsManagement() {
                     <SelectItem value="auto">Auto</SelectItem>
                   </SelectContent>
                 </Select>
-                <Button variant="outline">
-                  <Filter className="h-4 w-4" />
-                </Button>
               </div>
             </CardContent>
           </Card>
 
           <Tabs defaultValue="all">
             <TabsList>
-              <TabsTrigger value="all">All Claims ({mockClaims.length})</TabsTrigger>
-              <TabsTrigger value="pending">Pending (1)</TabsTrigger>
-              <TabsTrigger value="flagged">Flagged (1)</TabsTrigger>
+              <TabsTrigger value="all">Claims ({visibleClaims.length})</TabsTrigger>
             </TabsList>
 
             <TabsContent value="all" className="mt-4">
@@ -93,7 +96,7 @@ export default function ClaimsManagement() {
                         </tr>
                       </thead>
                       <tbody>
-                        {mockClaims.map((claim) => (
+                        {visibleClaims.map((claim) => (
                           <tr key={claim.id} className="border-b hover:bg-gray-50">
                             <td className="py-3 px-4 font-medium">{claim.id}</td>
                             <td className="py-3 px-4">
@@ -104,7 +107,7 @@ export default function ClaimsManagement() {
                             </td>
                             <td className="py-3 px-4 text-sm">{claim.vehicleInfo || 'N/A'}</td>
                             <td className="py-3 px-4">
-                              <span className="text-sm font-medium text-blue-600">View audit details</span>
+                              <span className="text-sm font-medium text-blue-600">Demo audit details</span>
                             </td>
                             <td className="py-3 px-4">₹{claim.estimatedCost.toLocaleString()}</td>
                             <td className="py-3 px-4">
@@ -133,13 +136,13 @@ export default function ClaimsManagement() {
                                 </Button>
                                 {claim.status === 'pending' && (
                                   <>
-                                    <Button variant="ghost" size="sm" className="text-green-600">
+                                    <Button disabled title="Approval is not connected" variant="ghost" size="sm" className="text-green-600">
                                       <CheckCircle className="h-4 w-4" />
                                     </Button>
-                                    <Button variant="ghost" size="sm" className="text-red-600">
+                                    <Button disabled title="Rejection is not connected" variant="ghost" size="sm" className="text-red-600">
                                       <XCircle className="h-4 w-4" />
                                     </Button>
-                                    <Button variant="ghost" size="sm" className="text-orange-600">
+                                    <Button disabled title="Review flagging is not connected" variant="ghost" size="sm" className="text-orange-600">
                                       <Flag className="h-4 w-4" />
                                     </Button>
                                   </>
@@ -196,9 +199,9 @@ export default function ClaimsManagement() {
               </div>
 
               <div className="flex gap-2 pt-2">
-                <Button className="bg-green-600 hover:bg-green-700">Approve</Button>
-                <Button variant="destructive">Reject</Button>
-                <Button variant="outline">Flag for Review</Button>
+                <Button disabled className="bg-green-600 hover:bg-green-700">Approve unavailable</Button>
+                <Button disabled variant="destructive">Reject unavailable</Button>
+                <Button disabled variant="outline">Flag unavailable</Button>
               </div>
             </div>
           )}

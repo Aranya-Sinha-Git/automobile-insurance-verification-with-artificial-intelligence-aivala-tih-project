@@ -214,8 +214,8 @@ function scoreDetectionCount(detections: DetectionInput[]): FraudLayer {
   let details: string;
 
   if (count === 0) {
-    score = 15;
-    details = "No damage detected — claim may be unfounded.";
+    score = 0;
+    details = "No damage detected; this risk indicator does not make a claim decision.";
   } else if (count <= 3) {
     score = 2;
     details = `${count} damage area(s) detected — consistent with a typical incident.`;

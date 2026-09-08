@@ -9,6 +9,7 @@ import {
 
 import { Badge } from "@/app/components/ui/badge";
 import { OfflineSync } from "@/app/components/OfflineSync";
+import { accountStorageKey, readAccountJson } from "@/app/utils/accountStorage";
 
 import {
   PlusCircle,
@@ -30,17 +31,17 @@ export default function Dashboard() {
 
   // ✅ GET CLAIMS
   const [recentClaims, setRecentClaims] = useState<any[]>(() =>
-    JSON.parse(localStorage.getItem("claims") || "[]"),
+    readAccountJson<any[]>("claims", []),
   );
   const [pendingDraft, setPendingDraft] = useState<any>(() =>
-    JSON.parse(localStorage.getItem("pending_claim_draft") || "null"),
+    readAccountJson<any | null>("pending_claim_draft", null),
   );
 
   useEffect(() => {
     const refreshClaims = () => {
-      setRecentClaims(JSON.parse(localStorage.getItem("claims") || "[]"));
+      setRecentClaims(readAccountJson<any[]>("claims", []));
       setPendingDraft(
-        JSON.parse(localStorage.getItem("pending_claim_draft") || "null"),
+        readAccountJson<any | null>("pending_claim_draft", null),
       );
     };
     window.addEventListener("aivala-offline-storage-changed", refreshClaims);
@@ -83,10 +84,24 @@ export default function Dashboard() {
 
   const statusClassName = (status: string) => {
     if (status === "approved") return "bg-green-500";
+    if (status === "no_damage") return "bg-blue-500";
     if (status === "rejected") return "bg-red-500";
-    if (status === "flagged") return "bg-orange-500";
+    if (status === "review_required" || status === "flagged") return "bg-orange-500";
+    if (status === "system_error") return "bg-gray-500";
     return "bg-yellow-500";
   };
+
+  const statusLabel = (status: string) => ({
+    approved: "DAMAGE DETECTED",
+    no_damage: "NO DAMAGE DETECTED",
+    review_required: "REVIEW REQUIRED",
+    flagged: "REVIEW REQUIRED",
+    rejected: "FORENSIC REJECTION",
+    system_error: "SYSTEM ERROR",
+    pending_upload: "PROCESSING",
+    processing: "PROCESSING",
+    failed_upload: "SYSTEM ERROR",
+  } as Record<string, string>)[status] || status.replaceAll("_", " ").toUpperCase();
 
   return (
 
@@ -176,7 +191,7 @@ export default function Dashboard() {
               </div>
 
               <div className="text-xs text-blue-100">
-                Rejected
+                Forensic Rejections
               </div>
 
             </CardContent>
@@ -230,7 +245,7 @@ export default function Dashboard() {
               <Button
                 size="sm"
                 onClick={() => {
-                  localStorage.setItem("current_claim_draft_id", pendingDraft.id);
+                  localStorage.setItem(accountStorageKey("current_claim_draft_id"), pendingDraft.id);
                   navigate("/app/claim-details");
                 }}
               >
@@ -328,7 +343,7 @@ export default function Dashboard() {
 
                         <Badge className={statusClassName(claim.status)}>
 
-                          {String(claim.status).replaceAll("_", " ")}
+                          {statusLabel(String(claim.status))}
 
                         </Badge>
 

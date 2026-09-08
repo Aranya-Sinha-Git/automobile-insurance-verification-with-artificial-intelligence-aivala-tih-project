@@ -964,7 +964,7 @@ class AivalaFraudPipeline:
 
         except Exception as exc:
             logger.error(f"Error in Layer 1 EXIF check: {exc}")
-            return False, f"Layer 1 Failed: Error processing EXIF metadata - {exc}"
+            return False, {"error_code": "FORENSIC_ENGINE_ERROR", "reason": "Layer 1 processing failed"}
         finally:
             if file_stream is not None:
                 file_stream.close()
@@ -1221,7 +1221,7 @@ class AivalaFraudPipeline:
 
         except Exception as exc:
             logger.error(f"Error in Layer 2 perceptual hashing: {exc}")
-            return False, f"Layer 2 Failed: Error computing fingerprint - {exc}"
+            return False, {"error_code": "FORENSIC_ENGINE_ERROR", "reason": "Layer 2 processing failed"}
 
     def layer_5_reverse_search_hook(
         self,
@@ -1398,7 +1398,7 @@ class AivalaFraudPipeline:
 
         except Exception as exc:
             logger.error(f"Error in Layer 3 TruFor ELA check: {exc}")
-            return False, f"Layer 3 Failed: Error calculating ELA - {exc}"
+            return False, {"error_code": "FORENSIC_ENGINE_ERROR", "reason": "Layer 3 processing failed"}
 
     # Backward compatibility alias
     layer_4_visual_tampering_ela = layer_3_visual_tampering_ela
@@ -1582,7 +1582,7 @@ class AivalaFraudPipeline:
 
         except Exception as exc:
             logger.error(f"Error in Layer 4 deepfake check: {exc}")
-            return False, f"Layer 4 Failed: Flagged as deepfake - {exc}"
+            return False, {"error_code": "FORENSIC_ENGINE_ERROR", "reason": "Layer 4 processing failed"}
 
     # Backward compatibility alias
     layer_5_deepfake_face_liveness = layer_4_deepfake_face_liveness

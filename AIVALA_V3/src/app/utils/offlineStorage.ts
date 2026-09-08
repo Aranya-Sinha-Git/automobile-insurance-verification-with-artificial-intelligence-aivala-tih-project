@@ -5,11 +5,15 @@ export type OfflineClaimStatus =
   | "pending_upload"
   | "processing"
   | "approved"
+  | "no_damage"
+  | "review_required"
+  | "system_error"
   | "rejected"
   | "failed_upload";
 
 export interface OfflineClaim {
   id: string;
+  ownerId?: string;
   type: "auto";
   status: OfflineClaimStatus;
   videoBlob?: Blob;
@@ -41,16 +45,48 @@ class OfflineStorageManager {
   private readonly dbPromise: Promise<IDBDatabase | null>;
   private claimsCache: OfflineClaim[] = [];
   private queueCache: SyncQueue = { pendingUploads: [], failedUploads: [] };
+  private activeOwnerId: string | null = null;
+  private ownerSelectionVersion = 0;
 
   constructor() {
-    this.loadFromFallback();
     this.dbPromise = this.initDB();
+  }
+
+  private ownerId(): string {
+    return this.activeOwnerId || "local-development";
+  }
+
+  private claimsFallbackKey(): string {
+    return `${this.STORAGE_KEY_CLAIMS_FALLBACK}_${this.ownerId()}`;
+  }
+
+  private queueFallbackKey(): string {
+    return `${this.STORAGE_KEY_QUEUE_FALLBACK}_${this.ownerId()}`;
+  }
+
+  /** Select the account whose local claims and queue are visible to the app. */
+  async setActiveOwner(ownerId: string | null): Promise<void> {
+    const version = ++this.ownerSelectionVersion;
+    this.activeOwnerId = ownerId;
+    this.claimsCache = [];
+    this.queueCache = { pendingUploads: [], failedUploads: [] };
+    if (ownerId) {
+      await this.ready();
+      if (version !== this.ownerSelectionVersion) return;
+      const db = await this.dbPromise;
+      if (db) await this.refreshCachesFromIDB(db);
+      else this.loadFromFallback();
+      if (version !== this.ownerSelectionVersion) {
+        this.claimsCache = [];
+        this.queueCache = { pendingUploads: [], failedUploads: [] };
+      }
+    }
   }
 
   private loadFromFallback() {
     try {
-      const claims = localStorage.getItem(this.STORAGE_KEY_CLAIMS_FALLBACK);
-      const queue = localStorage.getItem(this.STORAGE_KEY_QUEUE_FALLBACK);
+      const claims = localStorage.getItem(this.claimsFallbackKey());
+      const queue = localStorage.getItem(this.queueFallbackKey());
       if (claims) this.claimsCache = JSON.parse(claims);
       if (queue) this.queueCache = JSON.parse(queue);
     } catch (error) {
@@ -107,14 +143,16 @@ class OfflineStorageManager {
   private async refreshCachesFromIDB(db: IDBDatabase) {
     try {
       const claimTx = db.transaction(this.STORE_CLAIMS, "readonly");
-      const claims = await this.requestResult(
+      const claims = await this.requestResult<OfflineClaim[]>(
         claimTx.objectStore(this.STORE_CLAIMS).getAll(),
       );
-      this.claimsCache = claims || [];
+      this.claimsCache = (claims || []).filter(
+        (claim) => (claim.ownerId || "local-development") === this.ownerId(),
+      );
 
       const queueTx = db.transaction(this.STORE_QUEUE, "readonly");
       const queueRecord = await this.requestResult<any>(
-        queueTx.objectStore(this.STORE_QUEUE).get("sync_queue"),
+        queueTx.objectStore(this.STORE_QUEUE).get(`sync_queue_${this.ownerId()}`),
       );
       if (queueRecord?.data) this.queueCache = queueRecord.data;
       this.persistFallbacks();
@@ -130,11 +168,11 @@ class OfflineStorageManager {
         videoBlob: claim.videoBlob ? "[Persisted in IndexedDB]" : undefined,
       }));
       localStorage.setItem(
-        this.STORAGE_KEY_CLAIMS_FALLBACK,
+        this.claimsFallbackKey(),
         JSON.stringify(lightweightClaims),
       );
       localStorage.setItem(
-        this.STORAGE_KEY_QUEUE_FALLBACK,
+        this.queueFallbackKey(),
         JSON.stringify(this.queueCache),
       );
     } catch {
@@ -167,6 +205,7 @@ class OfflineStorageManager {
 
       const normalized: OfflineClaim = {
         ...claim,
+        ownerId: claim.ownerId || this.ownerId(),
         lastModified: claim.lastModified || new Date().toISOString(),
         size: claim.videoBlob?.size || claim.size || 0,
       };
@@ -197,7 +236,9 @@ class OfflineStorageManager {
   }
 
   getAllClaims(): OfflineClaim[] {
-    return [...this.claimsCache];
+    return this.claimsCache.filter(
+      (claim) => (claim.ownerId || "local-development") === this.ownerId(),
+    );
   }
 
   async getAllClaimsAsync(): Promise<OfflineClaim[]> {
@@ -206,7 +247,7 @@ class OfflineStorageManager {
   }
 
   getClaim(id: string): OfflineClaim | null {
-    return this.claimsCache.find((claim) => claim.id === id) || null;
+    return this.getAllClaims().find((claim) => claim.id === id) || null;
   }
 
   async getClaimAsync(id: string): Promise<OfflineClaim | null> {
@@ -218,12 +259,15 @@ class OfflineStorageManager {
       const claim = await this.requestResult<OfflineClaim | undefined>(
         transaction.objectStore(this.STORE_CLAIMS).get(id),
       );
-      if (claim) {
+      const belongsToActiveOwner = Boolean(
+        claim && (claim.ownerId || "local-development") === this.ownerId(),
+      );
+      if (belongsToActiveOwner && claim) {
         const index = this.claimsCache.findIndex((item) => item.id === id);
         if (index >= 0) this.claimsCache[index] = claim;
         else this.claimsCache.push(claim);
       }
-      return claim || null;
+      return belongsToActiveOwner ? claim || null : null;
     } catch {
       return this.getClaim(id);
     }
@@ -320,7 +364,7 @@ class OfflineStorageManager {
     if (db) {
       const transaction = db.transaction(this.STORE_QUEUE, "readwrite");
       transaction.objectStore(this.STORE_QUEUE).put({
-        id: "sync_queue",
+        id: `sync_queue_${this.ownerId()}`,
         data: this.queueCache,
       });
       await this.transactionComplete(transaction);
@@ -357,15 +401,16 @@ class OfflineStorageManager {
     const offlineIds = new Set(this.claimsCache.map((claim) => claim.id));
     this.claimsCache = [];
     this.queueCache = { pendingUploads: [], failedUploads: [] };
-    void this.clearIndexedDB();
-    localStorage.removeItem(this.STORAGE_KEY_CLAIMS_FALLBACK);
-    localStorage.removeItem(this.STORAGE_KEY_QUEUE_FALLBACK);
-    localStorage.removeItem("current_claim_draft_id");
-    localStorage.removeItem("pending_claim_draft");
+    void this.clearIndexedDB(offlineIds);
+    localStorage.removeItem(this.claimsFallbackKey());
+    localStorage.removeItem(this.queueFallbackKey());
+    localStorage.removeItem(this.claimsFallbackKey().replace("aivala_offline_claims_", "current_claim_draft_id_"));
+    localStorage.removeItem(this.claimsFallbackKey().replace("aivala_offline_claims_", "pending_claim_draft_"));
     try {
-      const claims = JSON.parse(localStorage.getItem("claims") || "[]");
+      const claimsKey = `${"claims"}_${this.ownerId()}`;
+      const claims = JSON.parse(localStorage.getItem(claimsKey) || "[]");
       localStorage.setItem(
-        "claims",
+        claimsKey,
         JSON.stringify(claims.filter((claim: any) => !offlineIds.has(claim.id))),
       );
     } catch {
@@ -374,15 +419,16 @@ class OfflineStorageManager {
     this.notifyChanged();
   }
 
-  private async clearIndexedDB() {
+  private async clearIndexedDB(ids: Set<string>) {
     const db = await this.dbPromise;
     if (!db) return;
     const transaction = db.transaction(
       [this.STORE_CLAIMS, this.STORE_QUEUE],
       "readwrite",
     );
-    transaction.objectStore(this.STORE_CLAIMS).clear();
-    transaction.objectStore(this.STORE_QUEUE).clear();
+    const claimStore = transaction.objectStore(this.STORE_CLAIMS);
+    ids.forEach((id) => claimStore.delete(id));
+    transaction.objectStore(this.STORE_QUEUE).delete(`sync_queue_${this.ownerId()}`);
     await this.transactionComplete(transaction);
   }
 

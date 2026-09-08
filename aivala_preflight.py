@@ -53,6 +53,7 @@ REQUIRED_IMPORTS = {
     "peft": "peft",
     "facenet-pytorch": "facenet_pytorch",
     "pyngrok": "pyngrok",
+    "firebase-admin": "firebase_admin",
     "torch": "torch",
 }
 
@@ -243,7 +244,8 @@ def run_preflight(*, strict: bool = True, check_ports: bool = True) -> bool:
 
     for package, module in REQUIRED_IMPORTS.items():
         found = importlib.util.find_spec(module) is not None
-        required = not (package == "facenet-pytorch")
+        auth_required = _truthy(os.environ.get("AIVALA_AUTH_REQUIRED")) or _truthy(os.environ.get("AIVALA_ENABLE_TUNNEL"))
+        required = package != "facenet-pytorch" and (package != "firebase-admin" or auth_required)
         checks.append(Check(f"Import {package}", found, "available" if found else "not installed", required=required))
 
     try:
@@ -256,7 +258,7 @@ def run_preflight(*, strict: bool = True, check_ports: bool = True) -> bool:
         checks.append(Check("PyTorch CUDA", False, str(exc)))
 
     if check_ports:
-        security_port = int(os.getenv("AIVALA_SECURITY_PORT", "8000"))
+        security_port = int(os.getenv("AIVALA_SECURITY_PORT", "8010"))
         for port in (7860, 8001, security_port):
             available = _port_available(port)
             checks.append(Check(f"Port {port}", available, "available" if available else "already in use"))

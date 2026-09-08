@@ -28,11 +28,11 @@ export default function WebMainDashboard() {
             <div className="flex-1 max-w-xl">
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
-                <Input placeholder="Search claims, customers..." className="pl-10" />
+                <Input disabled placeholder="Demo search is unavailable" className="pl-10" />
               </div>
             </div>
             <div className="flex items-center gap-4">
-              <Button variant="ghost" size="icon">
+              <Button disabled variant="ghost" size="icon" title="Notifications are not connected">
                 <Bell className="h-5 w-5" />
               </Button>
               <div className="flex items-center gap-2">
@@ -139,9 +139,9 @@ export default function WebMainDashboard() {
               <div className="flex items-center justify-between">
                 <div>
                   <CardTitle>Recent Claims</CardTitle>
-                  <CardDescription>Latest submissions requiring review</CardDescription>
+                  <CardDescription>Demo submissions for interface review</CardDescription>
                 </div>
-                <Button variant="outline">View All</Button>
+                <Button disabled variant="outline">View All unavailable</Button>
               </div>
             </CardHeader>
             <CardContent>
@@ -166,7 +166,7 @@ export default function WebMainDashboard() {
                         <td className="py-3 px-4 capitalize">{claim.type}</td>
                         <td className="py-3 px-4">
                           <span className="font-medium text-emerald-600">
-                            Verified
+                            Demo status
                           </span>
                         </td>
                         <td className="py-3 px-4">₹{claim.estimatedCost.toLocaleString()}</td>
@@ -183,7 +183,7 @@ export default function WebMainDashboard() {
                           </Badge>
                         </td>
                         <td className="py-3 px-4">
-                          <Button variant="ghost" size="sm">Review</Button>
+                          <Button disabled variant="ghost" size="sm">Review unavailable</Button>
                         </td>
                       </tr>
                     ))}

@@ -248,6 +248,25 @@ def health():
     }
 
 
+@app.get("/readiness")
+def readiness():
+    """Report gateway plus private model-service readiness separately."""
+    def probe(url: str) -> dict[str, Any]:
+        try:
+            response = httpx.get(url, timeout=2.0, follow_redirects=False)
+            return {"status": "ok" if response.status_code < 500 else "error", "http": response.status_code}
+        except Exception as exc:
+            return {"status": "unavailable", "detail": type(exc).__name__}
+
+    inference_url = os.getenv("AI_INFERENCE_SERVER_URL", "http://127.0.0.1:8001/analyze-video")
+    qwen_url = os.getenv("VLM_SEVERITY_URL", "http://127.0.0.1:7860/severity")
+    yolo_health = inference_url.rsplit("/", 1)[0].rstrip("/") + "/health"
+    qwen_health = qwen_url.rsplit("/", 1)[0].rstrip("/") + "/health"
+    services = {"gateway": {"status": "ok"}, "yolo": probe(yolo_health), "qwen": probe(qwen_health)}
+    ready = all(item.get("status") == "ok" for item in services.values())
+    return JSONResponse(status_code=200 if ready else 503, content={"status": "ready" if ready else "degraded", "services": services})
+
+
 @app.get("/tracking-logs/")
 def get_all_logs(authorization: str | None = Header(None), limit: int = 50, offset: int = 0):
     """Operator-only, redacted and paginated transaction history."""
@@ -298,7 +317,7 @@ async def verify_claim(
             return JSONResponse(
                 status_code=400,
                 content={
-                    "status": "REJECTED_FRAUD",
+                    "status": "INVALID_MEDIA",
                     "request_id": request_id,
                     "error_code": "EXACTLY_ONE_FILE_REQUIRED",
                     "reason": "Send exactly one evidence video using the 'file' or 'video' form field.",
@@ -324,7 +343,7 @@ async def verify_claim(
             return JSONResponse(
                 status_code=400,
                 content={
-                    "status": "REJECTED_FRAUD",
+                    "status": "INVALID_MEDIA",
                     "failed_layer": 1,
                     "reason": "Uploaded video file is empty (0 bytes)",
                 },
@@ -354,9 +373,23 @@ async def verify_claim(
         historical_fingerprints = await run_in_threadpool(get_all_historical_fingerprints)
         # A lost-response retry must not flag the claim's own persisted evidence.
         historical_fingerprints = [item for item in historical_fingerprints if item.get("claim_id") != current_claim_id]
-        audit_result = await run_in_threadpool(
-            fraud_pipeline.run_5_layer_audit, audit_target_path, historical_fingerprints, damage_location or None
-        )
+        try:
+            audit_result = await run_in_threadpool(
+                fraud_pipeline.run_5_layer_audit, audit_target_path, historical_fingerprints, damage_location or None
+            )
+        except Exception:
+            logger.exception("Forensic engine raised for claim=%s", current_claim_id)
+            _track(request_id, current_claim_id, owner_id, "FORENSIC_ENGINE_FAILURE")
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "status": "INFRA_FAILURE",
+                    "claim_id": current_claim_id,
+                    "request_id": request_id,
+                    "error_code": "FORENSIC_ENGINE_FAILURE",
+                    "reason": "Verification service unavailable. Your recording can be retried.",
+                },
+            )
         _track(request_id, current_claim_id, owner_id, "FORENSICS_COMPLETE")
 
         if not audit_result.get("passed"):
@@ -365,6 +398,20 @@ async def verify_claim(
             # Log exact internal layer failure for server debugging
             logger.warning(f"INTERNAL AUDIT REJECTION: Claim {current_claim_id} rejected at layer {failed_layer}: {internal_reason}")
             
+            if str(audit_result.get("error_code", "")).startswith("FORENSIC_ENGINE"):
+                _track(request_id, current_claim_id, owner_id, "FORENSIC_ENGINE_FAILURE")
+                return JSONResponse(
+                    status_code=503,
+                    content={
+                        "status": "INFRA_FAILURE",
+                        "claim_id": current_claim_id,
+                        "request_id": request_id,
+                        "error_code": audit_result.get("error_code"),
+                        "reason": "Verification service unavailable. Your recording can be retried.",
+                        "security_pipeline": audit_result.get("security_pipeline", {}),
+                    },
+                )
+
             # User-facing security generic reason (hides internal layer specifics)
             generic_user_reason = "Verification Failed: Evidence video did not pass security verification guidelines. Please record a new video."
             _track(request_id, current_claim_id, owner_id, "REJECTED_FORENSICS")

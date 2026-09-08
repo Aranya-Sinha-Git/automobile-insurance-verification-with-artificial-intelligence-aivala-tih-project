@@ -43,6 +43,7 @@ export default function DamageDetails() {
         {aiData && (
           <FiveStageSecurityCard
             securityDetails={aiData.fiveStageSecurity}
+            auditReceipt={aiData.cryptographicLedgerReceipt}
             compact={true}
             defaultExpanded={false}
           />

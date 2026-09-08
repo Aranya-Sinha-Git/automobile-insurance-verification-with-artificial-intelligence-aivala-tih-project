@@ -4,7 +4,7 @@ import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
 import { Label } from "@/app/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/app/components/ui/card";
-import { Shield, Upload, Lock, Loader2 } from "lucide-react";
+import { Shield, Lock, Loader2 } from "lucide-react";
 import { Checkbox } from "@/app/components/ui/checkbox";
 import { registerWithFirebase } from "@/app/utils/firebase";
 import { toast } from "sonner";
@@ -13,7 +13,6 @@ export default function Register() {
   const navigate = useNavigate();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
-  const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [agreedToTerms, setAgreedToTerms] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -60,20 +59,9 @@ export default function Register() {
             <Input type="email" placeholder="your@email.com" value={email} onChange={(e) => setEmail(e.target.value)} />
           </div>
           <div className="space-y-2">
-            <Label>Phone</Label>
-            <Input placeholder="+91 98765 43210" value={phone} onChange={(e) => setPhone(e.target.value)} />
-          </div>
-          <div className="space-y-2">
             <Label>Password</Label>
             <Input type="password" placeholder="••••••••" value={password} onChange={(e) => setPassword(e.target.value)} />
           </div>
-          
-          <div className="border-2 border-dashed border-gray-300 rounded-lg p-4 text-center">
-            <Upload className="h-8 w-8 mx-auto mb-2 text-gray-400" />
-            <p className="text-sm text-gray-600">Upload Insurance Card</p>
-            <Button variant="outline" size="sm" className="mt-2">Choose File</Button>
-          </div>
-
           {/* Privacy Consent */}
           <div className="space-y-3 pt-4 border-t">
             <div className="flex items-start gap-2">

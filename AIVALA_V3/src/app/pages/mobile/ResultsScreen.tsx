@@ -15,6 +15,7 @@ import {
 import type { HFAnalysisResult } from "@/app/utils/huggingFaceService";
 import FiveStageSecurityCard from "@/app/components/security/FiveStageSecurityCard";
 import { parseStoredAnalysis, readStoredAnalysis } from "@/app/utils/securityBackendService";
+import { readAccountJson } from "@/app/utils/accountStorage";
 
 export default function ResultsScreen() {
   const { claimId } = useParams();
@@ -29,7 +30,7 @@ export default function ResultsScreen() {
   let localRejectedReason: string | null = null;
   if (!aiData && claimId) {
     try {
-      const claims = JSON.parse(localStorage.getItem("claims") || "[]");
+      const claims = readAccountJson<any[]>("claims", []);
       const found = claims.find((claim: any) => claim.id === claimId);
       if (found?.status === "rejected") {
         localRejectedReason =
@@ -64,13 +65,14 @@ export default function ResultsScreen() {
       (aiData?.detections?.length === 0 &&
         aiData?.rejectionReason === "No repairable damage was confirmed in the evidence"),
   );
-  const isRejected = Boolean(localRejectedReason || (aiData?.isRejected && !isNoDamage));
+  const screenReplayFlag = Boolean(aiData?.screenRecordingCheck?.flagged);
+  const outcome = aiData?.outcome || (localRejectedReason ? "FORENSIC_REJECTION" : isNoDamage ? "NO_DAMAGE_DETECTED" : screenReplayFlag ? "REVIEW_REQUIRED" : "DAMAGE_DETECTED");
+  const isRejected = outcome === "FORENSIC_REJECTION" || Boolean(localRejectedReason || (aiData?.isRejected && !isNoDamage));
+  const isReviewRequired = outcome === "REVIEW_REQUIRED" || screenReplayFlag;
   const rejectionText =
     localRejectedReason ||
     aiData?.rejectionReason ||
     "The submitted evidence did not contain enough verified vehicle damage to approve this claim.";
-  const screenReplayFlag = Boolean(aiData?.screenRecordingCheck?.flagged);
-
   if (isRejected) {
     return (
       <div className="min-h-screen bg-gray-50 flex flex-col">
@@ -78,7 +80,7 @@ export default function ResultsScreen() {
           <div className="flex items-center gap-3">
             <ShieldAlert className="h-12 w-12" />
             <div>
-              <h1 className="text-2xl">Claim Rejected</h1>
+              <h1 className="text-2xl">Forensic Rejection</h1>
               <p className="text-white/70 text-sm">ID: {claimId}</p>
             </div>
           </div>
@@ -143,19 +145,19 @@ export default function ResultsScreen() {
     fraudAnalysis?.riskLevel ||
       (fraudScore <= 25 ? "low" : fraudScore <= 55 ? "medium" : "high"),
   ).toLowerCase() as "low" | "medium" | "high";
-  const riskBadge = screenReplayFlag
-    ? { label: "Manual Review", className: "bg-orange-100 text-orange-700" }
+  const riskBadge = isReviewRequired
+    ? { label: "Review Required", className: "bg-orange-100 text-orange-700" }
     : isNoDamage
     ? { label: "No Damage Detected", className: "bg-blue-100 text-blue-700" }
     : isRejected
-    ? { label: "Rejected (0 Detections)", className: "bg-red-100 text-red-700" }
+    ? { label: "Forensic Rejection", className: "bg-red-100 text-red-700" }
     : {
         low: { label: "Low Risk", className: "bg-white text-green-600" },
         medium: { label: "Medium Risk", className: "bg-yellow-100 text-yellow-700" },
         high: { label: "High Risk", className: "bg-red-100 text-red-700" },
       }[riskLevel];
 
-  const headerGradient = screenReplayFlag
+  const headerGradient = isReviewRequired
     ? "from-orange-500 to-amber-600"
     : isNoDamage
     ? "from-blue-500 to-blue-600"
@@ -173,14 +175,14 @@ export default function ResultsScreen() {
         className={`bg-gradient-to-r ${headerGradient} text-white p-6 rounded-b-3xl`}
       >
         <div className="flex items-center gap-3 mb-4">
-          {isRejected || screenReplayFlag || riskLevel === "high" ? (
+          {isRejected || isReviewRequired || riskLevel === "high" ? (
             <ShieldAlert className="h-12 w-12" />
           ) : (
             <CheckCircle className="h-12 w-12" />
           )}
           <div>
             <h1 className="text-2xl">
-              {isRejected ? "Claim Rejected / Failed" : isNoDamage ? "No Damage Confirmed" : screenReplayFlag || riskLevel === "high" ? "Claim Flagged" : "Claim Approved!"}
+              {isRejected ? "Forensic Rejection" : isNoDamage ? "No Damage Detected" : isReviewRequired ? "Review Required" : "Damage Detected"}
             </h1>
             <p className="text-white/70 text-sm">ID: {claimId}</p>
           </div>
@@ -226,6 +228,7 @@ export default function ResultsScreen() {
         {/* 5-Stage Security Pipeline System Card */}
         <FiveStageSecurityCard
           securityDetails={aiData.fiveStageSecurity}
+          auditReceipt={aiData.cryptographicLedgerReceipt}
           defaultExpanded={false}
         />
 
@@ -329,12 +332,12 @@ export default function ResultsScreen() {
             <ul className="text-sm space-y-1 text-gray-700">
               <li>✓ AI damage analysis complete</li>
               <li>✓ Fraud risk assessed ({screenReplayFlag ? "manual review" : `${riskLevel} risk`})</li>
-              {screenReplayFlag ? (
+              {isReviewRequired ? (
                 <li>• Wait for evidence authenticity review</li>
               ) : (
                 <>
-                  <li>• Choose settlement option</li>
-                  <li>• Schedule repair appointment</li>
+                  <li>• Choose a preferred settlement option</li>
+                  <li>• Selection is saved locally for follow-up</li>
                 </>
               )}
             </ul>
@@ -352,7 +355,7 @@ export default function ResultsScreen() {
             <Home className="mr-2 h-4 w-4" />
             Home
           </Button>
-          {!screenReplayFlag && !isNoDamage && (
+          {!isReviewRequired && !isRejected && !isNoDamage && (
             <Button
               className="flex-1"
               onClick={() => navigate(`/app/settlement/${claimId}`)}

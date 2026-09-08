@@ -2,6 +2,7 @@ import { useNavigate, useLocation } from "react-router";
 import { Button } from "@/app/components/ui/button";
 import { LayoutDashboard, FileText, TrendingUp, DollarSign, Users, Settings, LogOut, Shield, Menu, X } from "lucide-react";
 import { useState, useEffect } from "react";
+import { logoutFirebase } from "@/app/utils/firebase";
 
 export default function Sidebar() {
   const navigate = useNavigate();
@@ -97,6 +98,7 @@ export default function Sidebar() {
             <div>
               <h1 className="text-xl font-bold">AIVALA</h1>
               <p className="text-xs text-gray-400">Insurer Portal</p>
+              <p className="text-[10px] text-amber-300">Demo data only</p>
             </div>
           </div>
         </div>
@@ -120,7 +122,7 @@ export default function Sidebar() {
         </nav>
 
         <div className="p-4 border-t border-gray-800">
-          <Button variant="ghost" className="w-full justify-start text-red-400 hover:bg-gray-800" onClick={() => navigate("/web/login")}>
+      <Button variant="ghost" className="w-full justify-start text-red-400 hover:bg-gray-800" onClick={async () => { await logoutFirebase(); navigate("/web/login", { replace: true }); }}>
             <LogOut className="mr-3 h-5 w-5" />
             Logout
           </Button>

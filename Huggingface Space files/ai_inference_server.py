@@ -160,6 +160,45 @@ def _get_allowed_damage_classes(reported_damage_type: str | None) -> set[str] | 
     return allowed if allowed else None
 
 
+def _box_iou(a: list[float], b: list[float]) -> float:
+    ax1, ay1, ax2, ay2 = a
+    bx1, by1, bx2, by2 = b
+    ix1, iy1 = max(ax1, bx1), max(ay1, by1)
+    ix2, iy2 = min(ax2, bx2), min(ay2, by2)
+    intersection = max(0.0, ix2 - ix1) * max(0.0, iy2 - iy1)
+    area_a = max(0.0, ax2 - ax1) * max(0.0, ay2 - ay1)
+    area_b = max(0.0, bx2 - bx1) * max(0.0, by2 - by1)
+    union = area_a + area_b - intersection
+    return intersection / union if union > 0 else 0.0
+
+
+def _deduplicate_detections(candidates: list[dict[str, Any]], max_items: int = 12) -> list[dict[str, Any]]:
+    """Keep distinct damage areas while collapsing repeated frame observations."""
+    retained: list[dict[str, Any]] = []
+    for candidate in sorted(candidates, key=lambda item: item["confidence"], reverse=True):
+        same_area = False
+        for existing in retained:
+            if _normalize_damage_label(existing["label"]) != _normalize_damage_label(candidate["label"]):
+                continue
+            iou = _box_iou(existing["bbox"], candidate["bbox"])
+            if existing.get("frame_index") == candidate.get("frame_index"):
+                same_area = iou >= 0.35
+            else:
+                # Across frames, tolerate camera motion but keep separated panels.
+                ex = ((existing["bbox"][0] + existing["bbox"][2]) / 2) / max(1, existing.get("frame_width", 1))
+                ey = ((existing["bbox"][1] + existing["bbox"][3]) / 2) / max(1, existing.get("frame_height", 1))
+                cx = ((candidate["bbox"][0] + candidate["bbox"][2]) / 2) / max(1, candidate.get("frame_width", 1))
+                cy = ((candidate["bbox"][1] + candidate["bbox"][3]) / 2) / max(1, candidate.get("frame_height", 1))
+                same_area = iou >= 0.25 or ((ex - cx) ** 2 + (ey - cy) ** 2) ** 0.5 <= 0.12
+            if same_area:
+                break
+        if not same_area:
+            retained.append(candidate)
+        if len(retained) >= max_items:
+            break
+    return retained
+
+
 async def _request_vlm_severity(
     items: list[dict[str, Any]],
     damage_context: dict[str, Any],
@@ -323,6 +362,7 @@ async def _annotate_and_predict(
     frame_index = 0
     best_detections: list[dict[str, Any]] = []
     best_severity_items: list[dict[str, Any]] = []
+    all_candidates: list[dict[str, Any]] = []
     best_frame = None
     max_conf_sum = -1.0
     best_frame_index = 0
@@ -413,30 +453,19 @@ async def _annotate_and_predict(
                     "confidence": confidence,
                     "bbox": xyxy,
                     "detector": MODEL_PATH.name,
+                    "frame_index": frame_index,
+                    "frame_width": fw,
+                    "frame_height": fh,
                 })
 
-        # Keep one strongest sampled frame. Each retained detection from it is
-        # sent to the VLM separately with its own full-frame image and bbox.
-        frame_best_by_label: dict[str, dict[str, Any]] = {}
-        for det in frame_detections:
-            label = det["label"]
-            if label not in frame_best_by_label or det["confidence"] > frame_best_by_label[label]["confidence"]:
-                frame_best_by_label[label] = det
+        all_candidates.extend(frame_detections)
 
-        if frame_best_by_label and conf_sum > max_conf_sum:
+        # Keep the strongest frame for the visual preview. Detection aggregation
+        # below considers all sampled frames, rather than only this frame.
+        if frame_detections and conf_sum > max_conf_sum:
             full_frame = _encode_full_frame(frame)
             if full_frame:
                 max_conf_sum = conf_sum
-                best_detections = list(frame_best_by_label.values())
-                best_severity_items = [
-                    {
-                        "detection_id": det["label"], "label": det["label"],
-                        "confidence": det["confidence"], "detector": det["detector"],
-                        "bbox": [det["bbox"][0] / fw, det["bbox"][1] / fh, det["bbox"][2] / fw, det["bbox"][3] / fh],
-                        "image": full_frame,
-                    }
-                    for det in best_detections
-                ]
                 best_frame = annotated.copy()
                 best_frame_index = frame_index
 
@@ -450,6 +479,27 @@ async def _annotate_and_predict(
 
     if best_frame is None:
         raise RuntimeError("No frames could be read or written.")
+
+    best_detections = _deduplicate_detections(all_candidates)
+    preview_frame = _encode_full_frame(best_frame)
+    if not preview_frame:
+        raise RuntimeError("Could not encode an inference frame.")
+    best_severity_items = [
+        {
+            "detection_id": f"{det['label']}-{index}",
+            "label": det["label"],
+            "confidence": det["confidence"],
+            "detector": det["detector"],
+            "bbox": [
+                det["bbox"][0] / max(1, det.get("frame_width", width)),
+                det["bbox"][1] / max(1, det.get("frame_height", height)),
+                det["bbox"][2] / max(1, det.get("frame_width", width)),
+                det["bbox"][3] / max(1, det.get("frame_height", height)),
+            ],
+            "image": preview_frame,
+        }
+        for index, det in enumerate(best_detections)
+    ]
 
     # Create a mobile-friendly preview image.
     preview = best_frame
@@ -484,10 +534,10 @@ async def _annotate_and_predict(
 
     severity_by_id: dict[str, dict[str, str]] = {}
     vlm_results: list[dict[str, str]] = []
-    # Send one full-frame VLM request per retained detection. Each request still
-    # includes that detection's normalized bounding box and damage context.
-    for severity_item in best_severity_items:
-        result = await _request_vlm_severity([severity_item], damage_context)
+    # Send one request containing all retained detections. This preserves
+    # per-area severity while avoiding a request-per-frame/per-box explosion.
+    if best_severity_items:
+        result = await _request_vlm_severity(best_severity_items, damage_context)
         if not result:
             raise RuntimeError(
                 "VLM severity analysis failed or returned no usable result; "
@@ -504,8 +554,8 @@ async def _annotate_and_predict(
         "evidence": [],
         "source": "Qwen3-VL-4B car-damage QLoRA" if vlm_results else "not_assessed",
     }
-    for det in detections:
-        result = severity_by_id.get(det["label"])
+    for index, det in enumerate(detections):
+        result = severity_by_id.get(f"{det['label']}-{index}")
         if result:
             det["severity"] = result["severity"]
             det["severity_note"] = result["note"]

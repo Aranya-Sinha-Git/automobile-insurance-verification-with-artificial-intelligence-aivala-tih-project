@@ -13,13 +13,14 @@ import {
 import { estimateRepairCost, type DamageContext } from "./repairCostEstimator";
 import { computeFraudScore } from "./fraudScoreEngine";
 import { auth } from "./firebase";
+import { accountStorageKey, readAccountJson, writeAccountJson } from "./accountStorage";
 
 export class SecurityGatewayError extends Error {
   constructor(
     message: string,
     public readonly status: number,
     public readonly retryable: boolean,
-    public readonly category: "invalid_evidence" | "infrastructure",
+    public readonly category: "invalid_evidence" | "invalid_media" | "infrastructure",
   ) {
     super(message);
     this.name = "SecurityGatewayError";
@@ -56,13 +57,13 @@ async function authHeaders(): Promise<Record<string, string>> {
 }
 
 export function analysisStorageKey(claimId: string): string {
-  return `ai_analysis_${auth.currentUser?.uid || "local-development"}_${claimId}`;
+  return accountStorageKey(`ai_analysis_${claimId}`);
 }
 
 export function readStoredAnalysis(claimId?: string): string | null {
   if (!claimId) return null;
-  // Retain a one-way compatibility read for pre-auth local claims.
-  return localStorage.getItem(analysisStorageKey(claimId)) || localStorage.getItem(`ai_analysis_${claimId}`);
+  // Results are account-scoped so another signed-in user cannot read them.
+  return localStorage.getItem(analysisStorageKey(claimId));
 }
 
 function severityToScore(severity = "none"): number {
@@ -126,15 +127,14 @@ export function parseStoredAnalysis(raw: string | null): HFAnalysisResult | null
 
 function persistResult(claimId: string, result: HFAnalysisResult, flagged = false): void {
   localStorage.setItem(analysisStorageKey(claimId), JSON.stringify(result));
-  const claims = JSON.parse(localStorage.getItem("claims") || "[]");
-  localStorage.setItem(
+  const claims = readAccountJson<any[]>("claims", []);
+  writeAccountJson(
     "claims",
-    JSON.stringify(
-      claims.map((claim: any) =>
+    claims.map((claim: any) =>
         claim.id === claimId
           ? {
               ...claim,
-              status: result.isRejected || result.isNoDamage ? "rejected" : flagged ? "flagged" : "approved",
+              status: result.isRejected ? "rejected" : result.isNoDamage ? "no_damage" : flagged ? "review_required" : "approved",
               estimatedCost: result.estimatedCost,
               fraudScore: result.fraudScore,
               summary: result.summary,
@@ -142,7 +142,6 @@ function persistResult(claimId: string, result: HFAnalysisResult, flagged = fals
             }
           : claim,
       ),
-    ),
   );
 }
 
@@ -153,8 +152,7 @@ export async function verifyClaimWithSecurityBackend(
   persistedFileName?: string,
 ): Promise<HFAnalysisResult & { cryptographicLedgerReceipt?: string }> {
   const endpoint = `${getSecurityBackendURL()}/verify-claim/`;
-  const storedMeta = localStorage.getItem(`claim_meta_${claimId}`);
-  const claimMeta = storedMeta ? JSON.parse(storedMeta) : {};
+  const claimMeta = readAccountJson<Record<string, any>>(`claim_meta_${claimId}`, {});
   const reportedDamageType =
     Array.isArray(claimMeta.damageTypes) && claimMeta.damageTypes.length > 0
       ? claimMeta.damageTypes.join(", ")
@@ -208,10 +206,12 @@ export async function verifyClaimWithSecurityBackend(
       } else {
         if (response.status === 400 || response.status === 422) {
           throw new SecurityGatewayError(
-            "Verification Failed: Evidence video did not pass security verification guidelines. Please record a new video.",
+            parsed?.status === "INVALID_MEDIA"
+              ? "This recording could not be read. Please record the evidence again."
+              : "Verification Failed: Evidence video did not pass security verification guidelines. Please record a new video.",
             response.status,
             false,
-            "invalid_evidence",
+            parsed?.status === "INVALID_MEDIA" ? "invalid_media" : "invalid_evidence",
           );
         }
 
@@ -229,10 +229,13 @@ export async function verifyClaimWithSecurityBackend(
     }
   } catch (error: any) {
     if (error instanceof SecurityGatewayError) throw error;
-    throw new Error(
+    throw new SecurityGatewayError(
       error?.name === "AbortError"
         ? "Local evidence and AI analysis timed out after 300 seconds"
-        : error?.message || "Local security gateway request failed",
+        : "Verification service unavailable. Your recording has been saved and can be retried.",
+      0,
+      true,
+      "infrastructure",
     );
   } finally {
     window.clearTimeout(timeoutId);
@@ -261,6 +264,7 @@ export async function verifyClaimWithSecurityBackend(
         rejectionReason,
         "5-layer forensic verification flagged evidence authenticity.",
       ],
+      outcome: "FORENSIC_REJECTION",
     };
     persistResult(claimId, result);
     await offlineStorage.completeUpload(claimId);
@@ -334,6 +338,7 @@ export async function verifyClaimWithSecurityBackend(
     modelReasoning: Array.isArray(ai.model_reasoning) ? ai.model_reasoning : [],
     fiveStageSecurity: pipeline,
     cryptographicLedgerReceipt: receipt,
+    outcome: isNoDamage ? "NO_DAMAGE_DETECTED" : authenticityFlagged ? "REVIEW_REQUIRED" : "DAMAGE_DETECTED",
   };
 
   persistResult(claimId, result, authenticityFlagged);

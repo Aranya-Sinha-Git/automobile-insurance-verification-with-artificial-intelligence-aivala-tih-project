@@ -23,9 +23,9 @@ export default function TeamManagement() {
           <div className="flex items-center justify-between mb-6">
             <div>
               <h1 className="text-3xl mb-2">Team Management</h1>
-              <p className="text-gray-600">Monitor team performance and workload</p>
+              <p className="text-gray-600">Demo team data for interface review</p>
             </div>
-            <Button>
+            <Button disabled title="Team administration is not connected in this demo">
               <UserPlus className="mr-2 h-4 w-4" />
               Add Member
             </Button>
@@ -118,7 +118,7 @@ export default function TeamManagement() {
                     </div>
                   </div>
 
-                  <Button variant="outline" size="sm" className="w-full">
+                  <Button variant="outline" size="sm" className="w-full" disabled title="Messaging is not connected in this demo">
                     <Mail className="mr-2 h-4 w-4" />
                     Contact
                   </Button>
