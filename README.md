@@ -122,6 +122,7 @@ cd android
 - **GPU Acceleration**: Ensure NVIDIA drivers and PyTorch CUDA support are properly installed for real-time model performance.
 - **Port Conflicts**: Verify ports `7860`, `8001`, and the configured `AIVALA_SECURITY_PORT` are unblocked before launching `start_local_ai.py`.
 - **ngrok authentication/domain**: Configure `NGROK_AUTHTOKEN` and `NGROK_DOMAIN` in `.env.local`. A missing or invalid persistent domain stops startup so the mobile app is never pointed at an unverified endpoint.
+- **ngrok domain already online**: The launcher cleans up stale AIVALA-managed ngrok agents and reuses the configured domain when it still reaches a healthy gateway. Set `AIVALA_REUSE_EXISTING_TUNNEL=0` to disable reuse; if the domain belongs to another machine, stop that tunnel or choose a different `NGROK_DOMAIN`.
 - **FFmpeg/FFprobe**: Run `python setup_local_ai.py` to install the managed Windows build when full container metadata is needed. They are optional for the prototype; without FFprobe, OpenCV metadata fallback is used.
 - **Face detector**: `facenet-pytorch==2.6.0` is pinned separately for later installation. The prototype uses the verified OpenCV YuNet/ONNX/Haar fallback and reports that reduced detector mode in preflight.
 - **Bundled Python dependencies**: The checked-in `.vendor` directory is not used by default because it may contain platform-specific binaries. Set `AIVALA_USE_VENDOR_DEPS=1` only when that bundle has been rebuilt for the current machine.

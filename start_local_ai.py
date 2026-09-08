@@ -88,8 +88,50 @@ def cleanup_stale_tunnels() -> None:
         ngrok.kill(pyngrok_config=config)
     except Exception:
         # A manually started process is not owned by this Python process and is
-        # deliberately not killed blindly by name.
+        # handled by the exact executable-path cleanup below.
         pass
+
+    if os.name != "nt":
+        return
+
+    # pyngrok can only kill agents registered in its current process. A
+    # previous launcher may have left the same managed executable alive, which
+    # keeps the persistent domain reserved and causes ERR_NGROK_334. Query and
+    # terminate only processes whose executable path matches this installation.
+    expected_path = str(ngrok_path.resolve()).replace("'", "''")
+    query = (
+        "$expected = '"
+        + expected_path
+        + "'; Get-CimInstance Win32_Process -Filter \"Name = 'ngrok.exe'\" "
+        "| Where-Object { $_.ExecutablePath -eq $expected } "
+        "| Select-Object -ExpandProperty ProcessId"
+    )
+    try:
+        result = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", query],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        for line in result.stdout.splitlines():
+            pid = line.strip()
+            if pid.isdigit() and int(pid) != os.getpid():
+                subprocess.run(["taskkill.exe", "/PID", pid, "/T", "/F"], capture_output=True, check=False)
+    except Exception:
+        # The subsequent ngrok connection will report a precise domain conflict
+        # if process inspection is unavailable.
+        pass
+
+
+def _existing_tunnel_is_healthy(domain: str) -> bool:
+    """Return whether an already-running configured tunnel reaches a gateway."""
+    url = f"https://{domain.rstrip('/')}/health"
+    request = urllib.request.Request(url, headers={"ngrok-skip-browser-warning": "true"})
+    try:
+        with urllib.request.urlopen(request, timeout=5) as response:
+            return response.status == 200
+    except Exception:
+        return False
 
 
 def start_ngrok_tunnel(port: int) -> str:
@@ -110,6 +152,14 @@ def start_ngrok_tunnel(port: int) -> str:
     if not domain:
         raise RuntimeError("NGROK_DOMAIN must name the persistent dev domain")
 
+    public_url = f"https://{domain}"
+    # A previous launcher can leave the ngrok process alive after the local
+    # services stop. Reusing the configured domain avoids ERR_NGROK_334 and is
+    # safe only when it currently reaches a healthy gateway.
+    if _truthy(os.environ.get("AIVALA_REUSE_EXISTING_TUNNEL", "1")) and _existing_tunnel_is_healthy(domain):
+        print(f"\n[+] Reusing healthy ngrok persistent dev domain: {public_url}")
+        return public_url
+
     cleanup_stale_tunnels()
     config = conf.PyngrokConfig(
         ngrok_path=str(ngrok_path),
@@ -118,7 +168,22 @@ def start_ngrok_tunnel(port: int) -> str:
         config_path=str(ngrok_path.parent / "ngrok.yml"),
         startup_timeout=30,
     )
-    tunnel = ngrok.connect(port, "http", domain=domain, pyngrok_config=config)
+    try:
+        tunnel = ngrok.connect(port, "http", domain=domain, pyngrok_config=config)
+    except Exception as exc:
+        # ngrok reports ERR_NGROK_334 when another process owns the persistent
+        # domain. If that process serves this gateway, reuse it; otherwise
+        # surface a precise remediation instead of the opaque API exception.
+        if "ERR_NGROK_334" in str(exc) and _existing_tunnel_is_healthy(domain):
+            print(f"\n[+] Reusing healthy ngrok persistent dev domain: {public_url}")
+            return public_url
+        if "ERR_NGROK_334" in str(exc):
+            raise RuntimeError(
+                f"ngrok domain {domain} is already online but does not reach this gateway. "
+                "Stop the old ngrok process or set a different NGROK_DOMAIN."
+            ) from exc
+        raise
+
     url = str(tunnel.public_url).replace("http://", "https://", 1)
     if domain.lower() not in url.lower():
         ngrok.kill(pyngrok_config=config)
