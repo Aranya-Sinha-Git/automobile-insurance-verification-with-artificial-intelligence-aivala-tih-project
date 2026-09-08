@@ -290,7 +290,6 @@ export default function VideoRecording() {
         accountStorageKey("pending_claim_draft"),
         JSON.stringify({
           id: draftId,
-          image: capturedImage,
           createdAt: new Date().toISOString(),
         }),
       );

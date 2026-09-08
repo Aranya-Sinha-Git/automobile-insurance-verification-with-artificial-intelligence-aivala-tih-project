@@ -24,6 +24,39 @@ const firebaseConfig = {
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 export const auth = getAuth(app);
 
+/**
+ * Firebase restores the persisted session asynchronously in a WebView. Wait
+ * for that restore before building authenticated API requests, then allow the
+ * caller to force-refresh the ID token when a request must be accepted by the
+ * backend.
+ */
+export function getFirebaseIdToken(
+  forceRefresh = false,
+  timeoutMs = 5_000,
+): Promise<string | null> {
+  const waitForUser = (): Promise<FirebaseUser | null> => {
+    if (auth.currentUser) return Promise.resolve(auth.currentUser);
+
+    return new Promise((resolve) => {
+      let unsubscribe: () => void = () => undefined;
+      const timer = window.setTimeout(() => {
+        unsubscribe();
+        resolve(auth.currentUser);
+      }, timeoutMs);
+
+      unsubscribe = onAuthStateChanged(auth, (user) => {
+        window.clearTimeout(timer);
+        unsubscribe();
+        resolve(user);
+      });
+    });
+  };
+
+  return waitForUser()
+    .then((user) => user?.getIdToken(forceRefresh) || null)
+    .catch(() => null);
+}
+
 // Helper function to format Firebase error codes
 function formatAuthError(code?: string, fallbackMessage?: string): string {
   if (!code) return fallbackMessage || "Authentication failed";

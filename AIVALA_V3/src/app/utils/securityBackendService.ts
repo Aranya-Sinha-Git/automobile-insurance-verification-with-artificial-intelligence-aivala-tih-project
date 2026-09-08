@@ -12,7 +12,7 @@ import {
 } from "./huggingFaceService";
 import { estimateRepairCost, type DamageContext } from "./repairCostEstimator";
 import { computeFraudScore } from "./fraudScoreEngine";
-import { auth } from "./firebase";
+import { getFirebaseIdToken } from "./firebase";
 import { accountStorageKey, readAccountJson, writeAccountJson } from "./accountStorage";
 
 export class SecurityGatewayError extends Error {
@@ -52,8 +52,19 @@ export async function waitForSecurityGatewayReady(): Promise<boolean> {
 }
 
 async function authHeaders(): Promise<Record<string, string>> {
-  const token = await auth.currentUser?.getIdToken().catch(() => undefined);
-  return { "ngrok-skip-browser-warning": "true", ...(token ? { Authorization: `Bearer ${token}` } : {}) };
+  const token = await getFirebaseIdToken(true);
+  if (!token) {
+    throw new SecurityGatewayError(
+      "Your sign-in session is not ready. Please sign in again before verifying the claim.",
+      401,
+      false,
+      "infrastructure",
+    );
+  }
+  return {
+    "ngrok-skip-browser-warning": "true",
+    Authorization: `Bearer ${token}`,
+  };
 }
 
 export function analysisStorageKey(claimId: string): string {
